@@ -358,6 +358,18 @@ cool_cakes:
     - 3.061798095703125
     - 0.003753662109375
     scene_model: house_double_floor_lower
+datagen_bringing_water:
+  0:
+    robot_start_orientation:
+    - -0.00406013336032629
+    - 0.0030098266433924437
+    - 0.6239768266677856
+    - 0.7814265489578247
+    robot_start_position:
+    - 6.5399169921875
+    - -1.020416259765625
+    - 0.0037841796875
+    scene_model: house_single_floor
 freeze_fruit:
   0:
     robot_start_orientation:

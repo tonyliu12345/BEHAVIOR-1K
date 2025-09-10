@@ -12,7 +12,7 @@ from gello.utils.qa_utils import *
 from gello.utils.b1k_utils import ALL_QA_METRICS, COMMON_QA_METRICS, TASK_QA_METRICS
 import inspect
 
-RUN_QA = True
+RUN_QA = False
 
 gm.RENDER_VIEWER_CAMERA = False
 gm.DEFAULT_VIEWER_WIDTH = 128
@@ -45,11 +45,11 @@ def replay_hdf5_file(hdf_input_path):
     # Metrics path
     metrics_output_path = os.path.join(folder_path, f"qa_metrics.json")
 
-    # Move original HDF5 file to the new folder
-    new_hdf_input_path = os.path.join(folder_path, base_name)
-    if hdf_input_path != new_hdf_input_path:  # Avoid copying if already in target folder
-        os.rename(hdf_input_path, new_hdf_input_path)
-        hdf_input_path = new_hdf_input_path
+    # # Move original HDF5 file to the new folder
+    # new_hdf_input_path = os.path.join(folder_path, base_name)
+    # if hdf_input_path != new_hdf_input_path:  # Avoid copying if already in target folder
+    #     os.rename(hdf_input_path, new_hdf_input_path)
+    #     hdf_input_path = new_hdf_input_path
     
     # Define resolution for consistency
     RESOLUTION_DEFAULT = 560
@@ -61,7 +61,7 @@ def replay_hdf5_file(hdf_input_path):
     # Define external camera positions and orientations
     external_camera_poses = [
         # Camera 1
-        [[-0.4, 0, 2.0], [0.2706, -0.2706, -0.6533,  0.6533]],
+        [[0.0, 0, 0.0], [0.2706, -0.2706, -0.6533,  0.6533]],
         # # Camera 2
         # [[-0.2, 0.6, 2.0], [-0.1930, 0.4163, 0.8062, -0.3734]],
         # # Camera 3
@@ -85,7 +85,7 @@ def replay_hdf5_file(hdf_input_path):
         external_sensors_config.append({
             "sensor_type": "VisionSensor",
             "name": f"external_sensor{i}",
-            "relative_prim_path": f"/controllable__r1pro__robot_r1/base_link/external_sensor{i}",
+            "relative_prim_path": f"/controllable__r1__robot_r1/base_link/external_sensor{i}",
             "modalities": ["rgb"],
             "sensor_kwargs": {
                 "image_height": RESOLUTION_DEFAULT,
@@ -102,15 +102,15 @@ def replay_hdf5_file(hdf_input_path):
     external_sensors_config.append({
         "sensor_type": "VisionSensor",
         "name": f"external_sensor{idx}",
-        "relative_prim_path": f"/controllable__r1pro__robot_r1/zed_link/external_sensor{idx}",
+        "relative_prim_path": f"/controllable__r1__robot_r1/eyes/external_sensor{idx}",
         "modalities": ["rgb", "seg_instance_id"],
         "sensor_kwargs": {
             "image_height": RESOLUTION_DEFAULT,
             "image_width": RESOLUTION_DEFAULT,
             "horizontal_aperture": 40.0,
         },
-        "position": th.tensor([0.06, 0.0, 0.01], dtype=th.float32),
-        "orientation": th.tensor([-1.0, 0.0, 0.0, 0.0], dtype=th.float32),
+        "position": th.tensor([0.0, 0.0, 0.0], dtype=th.float32),
+        "orientation": th.tensor([0.0, 0.0, 0.0, 1.0], dtype=th.float32),
         "pose_frame": "parent",
     })
 
@@ -181,12 +181,12 @@ def replay_hdf5_file(hdf_input_path):
     video_writers = []
     video_rgb_keys = []
     
-    # Create video writer for robot cameras
-    robot_camera_names = ['robot_r1::robot_r1:left_realsense_link:Camera:0::rgb', 
-                        'robot_r1::robot_r1:right_realsense_link:Camera:0::rgb']
-    for robot_camera_name in robot_camera_names:
-        video_writers.append(env.create_video_writer(fpath=f"{video_dir}/{robot_camera_name}.mp4"))
-        video_rgb_keys.append(robot_camera_name)
+    # # Create video writer for robot cameras
+    # robot_camera_names = ['robot_r1::robot_r1:left_realsense_link:Camera:0::rgb', 
+    #                     'robot_r1::robot_r1:right_realsense_link:Camera:0::rgb']
+    # for robot_camera_name in robot_camera_names:
+    #     video_writers.append(env.create_video_writer(fpath=f"{video_dir}/{robot_camera_name}.mp4"))
+    #     video_rgb_keys.append(robot_camera_name)
     
     # Create video writers for external cameras
     for i in range(len(external_sensors_config)):

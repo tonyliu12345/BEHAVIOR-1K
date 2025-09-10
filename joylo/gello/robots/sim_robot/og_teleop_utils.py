@@ -1037,7 +1037,7 @@ def setup_ghost_robot_info(ghost, robot):
             arm_joint_idxs.append(joint_keys_list.index(f"{arm}_arm_joint{i+1}"))
             arm_action_idxs.append(robot.arm_action_idx[arm][i])
         for i in range(2):
-            finger_name = f"{arm}_gripper_finger_joint{i+1}"
+            finger_name = f"{arm}_gripper_finger_joint{i+1}" if isinstance(robot, R1Pro) else f"{arm}_gripper_axis{i+1}"
             if not ghost.joints[finger_name].is_mimic_joint:
                 finger_joint_idxs.append(joint_keys_list.index(finger_name))
     

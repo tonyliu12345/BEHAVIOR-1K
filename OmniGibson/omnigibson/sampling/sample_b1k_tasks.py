@@ -149,6 +149,16 @@ TASK_CUSTOM_LISTS = {
         },
         "blacklist": None,
     },
+    ("datagen_bringing_water", "house_single_floor"): {
+        "whitelist": {
+            "bottle.n.01": {
+                "beer_bottle": {
+                    "nigfha": None
+                }
+            }
+        },
+        "blacklist": None,
+    },
 }
 
 # with open("task_custom_lists.json", "r") as f:

@@ -277,8 +277,8 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
 
     def _postprocess_action(self, action):
         """Postprocesses action by applying head tracking."""
-        # if self._enable_head_tracking:
-        #     action = self._overwrite_head_action(action)
+        if self._enable_head_tracking and isinstance(self.robot, Tiago):
+            action = self._overwrite_head_action(action)
         return action
 
     def get_action_space(self):
@@ -992,7 +992,7 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
                 # if not raytest_result["hit"]:
                 #     print("raytest from eyes to object does not hit, skipping sample")
                 #     continue
-                if raytest_result["hit"] and raytest_result["rigidBody"] != self._tracking_object.root_link.prim_path:
+                if raytest_result["hit"] and raytest_result["rigidBody"] not in [link.prim_path for link in self._tracking_object.links.values()]:
                     print(
                         f"raytest from eyes to object hits something else, expect {self._tracking_object.root_link.prim_path}, got {raytest_result['rigidBody']}, skipping sample"
                     )
@@ -1365,7 +1365,7 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
             self._motion_generator.update_obstacles(ignore_objects=ignore_objects)
 
         eyes_target_pos, eyes_target_quat = None, None
-        if self._enable_head_tracking:
+        if self._enable_head_tracking and isinstance(self.robot, R1):
             obj_pose = self._tracking_object.get_position_orientation()
             eyes_target_pos = obj_pose[0]
             eyes_target_quat = obj_pose[1]
@@ -2076,8 +2076,9 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
 
         # if visibility_constraint:
         assert self.target_eyes_pose is not None, "target_eyes_pose is None"
-        target_pos["eyes"] = self.target_eyes_pose[0]
-        target_quat["eyes"] = self.target_eyes_pose[1]
+        if isinstance(self.robot, R1):
+            target_pos["eyes"] = self.target_eyes_pose[0]
+            target_quat["eyes"] = self.target_eyes_pose[1]
 
         print("Base motion planning")
         q_traj = self._plan_joint_motion(
@@ -2348,6 +2349,12 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
         distance_lo, distance_hi = m.BASE_POSE_SAMPLING_LOWER_BOUND, m.BASE_POSE_SAMPLING_UPPER_BOUND
         yaw_lo, yaw_hi = -math.pi, math.pi
 
+        if eef_pose is None:
+            eef_pose, _ = self._sample_grasp_pose(obj)
+
+        if isinstance(eef_pose, tuple):
+            eef_pose = {self.arm: eef_pose}
+
         avg_arm_workspace_range = th.mean(self.robot.arm_workspace_range[self.arm])
         # We want the robot to be facing towards the object in a way that is more conducive to manipulating with the requested arm
         # So, if eef_pose has an arm provided, we use that to guide the yaw of the base
@@ -2355,12 +2362,6 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
             avg_arm_workspace_range = th.tensor(
                 [th.mean(self.robot.arm_workspace_range[arm_side]) for arm_side in eef_pose.keys()]
             ).mean()
-
-        if eef_pose is None:
-            eef_pose, _ = self._sample_grasp_pose(obj)
-
-        if isinstance(eef_pose, tuple):
-            eef_pose = {self.arm: eef_pose}
 
         target_pose = eef_pose
 
@@ -2374,6 +2375,9 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
         if not skip_obstacle_update:
             # Update obstacle once before sampling
             self._motion_generator.update_obstacles()
+
+        if isinstance(self.robot, Tiago):
+            visibility_constraint = False
 
         self.target_eyes_pose = None
         while attempt < sampling_attempts:

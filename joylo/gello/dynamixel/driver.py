@@ -127,7 +127,7 @@ class FakeDynamixelDriver(DynamixelDriverProtocol):
 
 class DynamixelDriver(DynamixelDriverProtocol):
     def __init__(
-        self, ids: Sequence[int], port: str = "/dev/ttyUSB0", baudrate: int = 2000000
+        self, ids: Sequence[int], port: str = "/dev/ttyUSB0", baudrate: int = 1000000
     ):
         """Initialize the DynamixelDriver class.
 
@@ -514,10 +514,10 @@ class DynamixelDriver(DynamixelDriverProtocol):
                     )
                     vel = np.int32(np.uint32(vel))
                     _joint_vels[i] = vel
-                else:
-                    raise RuntimeError(
-                        f"Failed to get joint velocities for Dynamixel with ID {dxl_id}"
-                    )
+                # else:
+                #     raise RuntimeError(
+                #         f"Failed to get joint velocities for Dynamixel with ID {dxl_id}"
+                #     )
             # Convert to RPM --> rad / sec
             return _joint_vels * 0.229 * 2 * np.pi / 60
 
