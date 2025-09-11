@@ -7,14 +7,15 @@ from pathlib import Path
 import h5py
 import imageio
 import torch as th
-
+import numpy as np
 import omnigibson as og
 import omnigibson.lazy as lazy
 from omnigibson.envs.env_wrapper import EnvironmentWrapper, create_wrapper
 from omnigibson.macros import gm, macros
 from omnigibson.objects.object_base import BaseObject
+from omnigibson.robots.robot_base import BaseRobot
 from omnigibson.sensors.vision_sensor import VisionSensor
-from omnigibson.utils.vision_utils import instance_to_bbox, calculate_delta_e
+from omnigibson.utils.vision_utils import instance_to_bbox, overlay_bboxes_with_names, overlay_bboxes, overlay_segmentation_mask
 from omnigibson.utils.config_utils import TorchEncoder
 from omnigibson.utils.data_utils import merge_scene_files
 from omnigibson.utils.python_utils import create_object_from_init_info, h5py_group_to_torch, assert_valid_key
@@ -26,6 +27,25 @@ from omnigibson.controllers.controller_base import ControlType
 log = create_module_logger(module_name=__name__)
 
 h5py.get_config().track_order = True
+
+EXTRA_OBJECT_WHITE_LIST = {
+    "straight_chair_uofiqj_0",
+    "door_bexenl_0",
+    "drop_in_sink_lkklqs_0",
+    "coffee_table_rlsebe_0",
+    "door_bexenl_0",
+    "breakfast_table_xftrki_0",
+    "garden_chair_lraplz_0",
+    "garden_chair_cottya_0",
+    "garden_chair_cottya_1",
+    "garden_chair_cottya_2",
+    "toilet_udiezm_0",
+    "door_vudhlc_1",
+    "sliding_door_tprpvb_10",
+    "bottom_cabinet_rhdbzv_0",
+    "door_bexenl_0",
+    "drop_in_sink_awvzkn_0"
+}
 
 
 class DataWrapper(EnvironmentWrapper):
@@ -892,7 +912,7 @@ class DataPlaybackWrapper(DataWrapper):
         step_data["truncated"] = truncated
         return step_data
 
-    def playback_episode(self, episode_id, record_data=True, video_writers=None, video_rgb_keys=None):
+    def playback_episode(self, episode_id, record_data=True, video_writers=None, video_rgb_keys=None, replay_config=None):
         """
         Playback episode @episode_id, and optionally record observation data if @record is True
 
@@ -959,6 +979,25 @@ class DataPlaybackWrapper(DataWrapper):
                             kd=None,
                         )
 
+        # # pre-defined colors for robot skin
+        # robot_skin_colors = {
+        #     "red": th.tensor([1.0, 0.0, 0.0]),
+        #     "green": th.tensor([0.0, 1.0, 0.0]), 
+        #     "blue": th.tensor([0.0, 0.0, 1.0]),
+        #     "white": th.tensor([1.0, 1.0, 1.0]),
+        #     "black": th.tensor([0.0, 0.0, 0.0])
+        # }
+
+        # skin_color_name = "white"
+
+        # # include robot skin control
+        # active_robot = self.env.robots[0]
+        # for mat in active_robot.materials:
+        #     mat.diffuse_texture = ""
+        # for mat in active_robot.materials:
+        #     mat.diffuse_color_constant = robot_skin_colors[skin_color_name] # set to white
+
+
         # Restore to initial state
         og.sim.load_state(state[0, : int(state_size[0])], serialized=True)
 
@@ -968,9 +1007,38 @@ class DataPlaybackWrapper(DataWrapper):
             step_data = {"obs": self._process_obs(obs=init_obs, info=init_info)}
             self.current_traj_history.append(step_data)
 
+        # import random
+        # random.seed(42)
+        if replay_config is not None and replay_config["record_visibility"]:
+            # get task_relevant_object names
+            task = self.env.task
+            task_objects = [bddl_obj.wrapped_obj for bddl_obj in task.object_scope.values() 
+                            if bddl_obj.wrapped_obj is not None and bddl_obj.exists]
+            task_relevant_objects = [obj.name for obj in task_objects if not isinstance(obj, BaseRobot) and 'floors' not in obj.name]
+
+            # get extra object white list
+            extra_object_white_list = [obj.name for obj in self.scene.objects if obj.name in EXTRA_OBJECT_WHITE_LIST]
+
+            # get all object names
+            task_relevant_objects = task_relevant_objects + extra_object_white_list
+
+        
         for i, (a, s, ss, r, te, tr) in enumerate(
             zip(action, state[1:], state_size[1:], reward, terminated, truncated)
         ):
+
+            # if i % 200 == 0:
+            #     # update robot skin color 
+            #     active_robot = self.env.robots[0]
+            #     last_skin_color_name = skin_color_name
+            #     remaining_colors = {k: v for k, v in robot_skin_colors.items() if k != last_skin_color_name}
+            #     skin_color_name = random.choice(list(remaining_colors.keys()))
+            #     for mat in active_robot.materials:
+            #         mat.diffuse_color_constant = remaining_colors[skin_color_name]
+            #     for _ in range(100):
+            #         og.sim.render()
+                
+
             # Execute any transitions that should occur at this current step
             if str(i) in transitions:
                 cur_transitions = transitions[str(i)]
@@ -1010,11 +1078,78 @@ class DataPlaybackWrapper(DataWrapper):
                 )
                 self.current_traj_history.append(step_data)
 
+            if replay_config is not None and replay_config["record_visibility"]:
+                object_visibility_in_camera_dict = {}
+                seg_camera_keys = [key.replace("rgb", "seg_instance") for key in replay_config["record_rgb_keys"]]
+                seg_camera_info_list = info["obs_info"]
+                camera_types = seg_camera_info_list.keys()
+
+                bbox_dict = {}
+                instance_mapping_dict = {}
+                visiblility_matrix_dict = {}
+
+                for sensor in replay_config["sensors"]:
+                    for camera_type in camera_types:
+                        if camera_type not in sensor:
+                            continue
+
+                        # below is the object id to object name mapping
+                        current_camera_info = seg_camera_info_list[camera_type][sensor]['seg_instance']
+                        all_unique_obj_ids = current_camera_info.keys()
+                        # now we get the corresponding seg_camera visibility matrix
+                        # we noticed that the sensor name is not the same as the obs stored name
+                        # so we need to find the correct
+                        found_seg_obs_key = None
+                        for key in seg_camera_keys:
+                            if sensor in key:
+                                found_seg_obs_key = key
+                                break
+                        assert found_seg_obs_key is not None, f"We cannot find the corresponding seg_camera visibility matrix for {sensor} and {camera_type}"
+
+                        # below is a tensor of shape (H, W), where each element is the object id of the visible object for curerent camera view
+                        current_seg_camera_visibility_matrix = self.current_obs[found_seg_obs_key]
+
+                        # for each object, will store a dict like {camera_name: [pixel_num, bbox_x_min, bbox_y_min, bbox_x_max, bbox_y_max, img_H, img_W]}
+                        
+                        # 1. we first get object id to num_pixels mapping
+                        # build a dictionary of {object_id: num_pixels}
+                        obj_pixels_dict = {}
+                        available_obj_ids = th.unique(current_seg_camera_visibility_matrix)
+                        for obj_id in available_obj_ids:
+                            obj_pixels_dict[obj_id.item()] = (current_seg_camera_visibility_matrix == obj_id).sum().item()
+                        
+                        # 2. we then get the bbox for each object
+                        bboxes = instance_to_bbox(current_seg_camera_visibility_matrix, current_camera_info, all_unique_obj_ids)
+                        bbox_dict[sensor] = bboxes
+                        instance_mapping_dict[sensor] = current_camera_info
+                        visiblility_matrix_dict[sensor] = current_seg_camera_visibility_matrix
+
+
             # If writing to video, write desired frame
             if video_writers is not None:
                 for writer, rgb_key in zip(video_writers, video_rgb_keys):
                     assert_valid_key(rgb_key, self.current_obs.keys(), "video_rgb_key")
-                    writer.append_data(self.current_obs[rgb_key][:, :, :3].numpy())
+                    raw_frame = self.current_obs[rgb_key][:, :, :3].numpy()
+                    camera_type = rgb_key.split("::")[1]
+                    if replay_config is not None and replay_config["record_visibility"] and camera_type in bbox_dict:
+                        # Get the unique instance IDs for this camera
+                        unique_ids = th.unique(visiblility_matrix_dict[camera_type]).cpu().numpy().tolist()
+                        # Ensure the array is contiguous and compatible with OpenCV
+                        if not raw_frame.flags.c_contiguous:
+                            raw_frame = np.ascontiguousarray(raw_frame)
+                        # Use segmentation mask overlay with 50% transparency
+                        frame = overlay_segmentation_mask(
+                            img=raw_frame,
+                            visibility_matrix=visiblility_matrix_dict[camera_type],
+                            unique_ins_ids=unique_ids,
+                            instance_mapping=instance_mapping_dict[camera_type],
+                            task_relevant_objects=task_relevant_objects,
+                            in_place=True,
+                        )
+                    else:
+                        frame = raw_frame
+                    writer.append_data(frame)
+                    del raw_frame
 
             self.step_count += 1
 
@@ -1151,10 +1286,16 @@ class SceneGraphDataPlaybackWrapper(DataPlaybackWrapper):
 
         # Hot swap in additional info for playing back data
 
-        # Minimize physics leakage during playback (we need to take an env step when loading state)
-        config["env"]["action_frequency"] = 1000.0
-        config["env"]["rendering_frequency"] = 1000.0
-        config["env"]["physics_frequency"] = 1000.0
+        if include_contacts:
+            # Minimize physics leakage during playback (we need to take an env step when loading state)
+            config["env"]["action_frequency"] = 1000.0
+            config["env"]["rendering_frequency"] = 1000.0
+            config["env"]["physics_frequency"] = 1000.0
+        else:
+            # Since we are setting all objects to be visual-only, physics will not be propogating
+            config["env"]["action_frequency"] = 30.0
+            config["env"]["rendering_frequency"] = 30.0
+            config["env"]["physics_frequency"] = 120.0
 
         # Make sure obs space is flattened for recording
         config["env"]["flatten_obs_space"] = True
@@ -1167,6 +1308,8 @@ class SceneGraphDataPlaybackWrapper(DataPlaybackWrapper):
             config["scene"]["scene_file"] = merge_scene_files(
                 scene_a=full_scene_json, scene_b=config["scene"]["scene_file"], keep_robot_from="b"
             )
+            config["scene"]["load_room_types"] = None
+            config["scene"]["load_room_instances"] = None
 
         # Use dummy task if not loading task
         if not include_task:
@@ -1222,8 +1365,8 @@ class SceneGraphDataPlaybackWrapper(DataPlaybackWrapper):
                     obj.visual_only = True
 
         # If not controlling robots, disable for all robots
-        for robot in env.robots:
-            robot.control_enabled = include_robot_control
+        # for robot in env.robots:
+        #     robot.control_enabled = include_robot_control
 
         # Optionally include the desired environment wrapper specified in the config
         if include_env_wrapper:
@@ -1243,6 +1386,8 @@ class SceneGraphDataPlaybackWrapper(DataPlaybackWrapper):
             only_successes=only_successes,
             flush_every_n_traj=flush_every_n_traj,
             full_scene_file=full_scene_file,
+            include_contacts=include_contacts,
+            include_robot_control=include_robot_control,
         )
     
     def playback_episode(

@@ -277,6 +277,415 @@ def instance_to_bbox(obs: th.Tensor, instance_mapping: Dict[int, str], unique_in
 
     return bboxes
 
+def find_non_overlapping_text_position(x1, y1, x2, y2, text_size, occupied_regions, img_height, img_width):
+    """Find a text position that doesn't overlap with existing text."""
+    text_w, text_h = text_size
+    padding = 5
+
+    # Try different positions in order of preference
+    positions = [
+        # Above bbox
+        (x1, y1 - text_h - padding),
+        # Below bbox
+        (x1, y2 + text_h + padding),
+        # Right of bbox
+        (x2 + padding, y1 + text_h),
+        # Left of bbox
+        (x1 - text_w - padding, y1 + text_h),
+        # Inside bbox (top-left)
+        (x1 + padding, y1 + text_h + padding),
+        # Inside bbox (bottom-right)
+        (x2 - text_w - padding, y2 - padding),
+    ]
+
+    for text_x, text_y in positions:
+        # Check bounds
+        if text_x < 0 or text_y < text_h or text_x + text_w > img_width or text_y > img_height:
+            continue
+
+        # Check for overlap with existing text
+        text_rect = (text_x - padding, text_y - text_h - padding, text_x + text_w + padding, text_y + padding)
+
+        overlap = False
+        for occupied_rect in occupied_regions:
+            if (
+                text_rect[0] < occupied_rect[2]
+                and text_rect[2] > occupied_rect[0]
+                and text_rect[1] < occupied_rect[3]
+                and text_rect[3] > occupied_rect[1]
+            ):
+                overlap = True
+                break
+
+        if not overlap:
+            return text_x, text_y, text_rect
+
+    # Fallback: use the first position even if it overlaps
+    text_x, text_y = positions[0]
+    text_rect = (text_x - padding, text_y - text_h - padding, text_x + text_w + padding, text_y + padding)
+    return text_x, text_y, text_rect
+
+def get_consistent_color(instance_id):
+    import colorsys
+
+    colors = [
+        (52, 73, 94),  # Dark blue-gray
+        (142, 68, 173),  # Purple
+        (39, 174, 96),  # Emerald green
+        (230, 126, 34),  # Orange
+        (231, 76, 60),  # Red
+        (41, 128, 185),  # Blue
+        (155, 89, 182),  # Amethyst
+        (26, 188, 156),  # Turquoise
+        (241, 196, 15),  # Yellow (darker)
+        (192, 57, 43),  # Dark red
+        (46, 204, 113),  # Green
+        (52, 152, 219),  # Light blue
+        (155, 89, 182),  # Violet
+        (22, 160, 133),  # Dark turquoise
+        (243, 156, 18),  # Dark yellow
+        (211, 84, 0),  # Dark orange
+        (154, 18, 179),  # Dark purple
+        (31, 81, 255),  # Royal blue
+        (20, 90, 50),  # Forest green
+        (120, 40, 31),  # Maroon
+    ]
+
+    # # a test, consistently use green color
+    # return (39, 174, 96)
+
+    # Use hash to consistently select a color from the palette
+    hash_val = hash(str(instance_id))
+    base_color_idx = hash_val % len(colors)
+    base_color = colors[base_color_idx]
+
+    # Add slight variation while maintaining sophistication
+    # Convert to HSV for easier manipulation
+    r, g, b = [c / 255.0 for c in base_color]
+    h, s, v = colorsys.rgb_to_hsv(r, g, b)
+
+    # Add small random variation to hue (±10 degrees) and saturation/value
+    hue_variation = ((hash_val >> 8) % 20 - 10) / 360.0  # ±10 degrees
+    sat_variation = ((hash_val >> 16) % 20 - 10) / 200.0  # ±5% saturation
+    val_variation = ((hash_val >> 24) % 20 - 10) / 200.0  # ±5% value
+
+    # Apply variations with bounds checking
+    h = (h + hue_variation) % 1.0
+    s = max(0.4, min(0.9, s + sat_variation))  # Keep saturation between 40-90%
+    v = max(0.3, min(0.7, v + val_variation))  # Keep value between 30-70% (darker for contrast)
+
+    # Convert back to RGB
+    r, g, b = colorsys.hsv_to_rgb(h, s, v)
+
+    # Convert to 0-255 range
+    return (int(r * 255), int(g * 255), int(b * 255))
+
+def clean_single_part(part: str) -> str:
+    """Clean a single part that has no underscores."""
+    # Remove trailing numbers for single parts
+    cleaned = ''.join(c for c in part if not c.isdigit())
+    return cleaned if cleaned else part
+
+def is_strange_string(part: str) -> bool:
+    """
+    Detect if a 6-character string is likely a strange/generated identifier.
+    
+    Characteristics of strange strings:
+    - Exactly 6 characters
+    - Mix of letters that don't form common English patterns
+    - Often have repeated characters or unusual patterns
+    - Sequential patterns like "abcdef"
+    
+    Args:
+        part: String part to check
+        
+    Returns:
+        bool: True if likely a strange string
+    """
+    if len(part) != 6:
+        return False
+    
+    # Check for common English prefixes/suffixes in 6-char words
+    common_6char_words = {'cutter', 'broken', 'paving', 'marker', 'napkin', 'edible', 'tablet', 'saddle', 'flower', 'wooden', 'square', 'peeler', 'shovel', 'nickel', 'pestle', 'gravel', 'french', 'sesame', 'bleach', 'pewter', 'outlet', 'fabric', 'staple', 'banana', 'almond', 'masher', 'carpet', 'fridge', 'swivel', 'normal', 'potato', 'litter', 'button', 'pomelo', 'hanger', 'trophy', 'drying', 'hamper', 'radish', 'grater', 'pillow', 'skates', 'canvas', 'cloche', 'nutmeg', 'indoor', 'slicer', 'lotion', 'rolled', 'starch', 'chives', 'tomato', 'dinner', 'tartar', 'goblet', 'polish', 'liners', 'runner', 'danish', 'tissue', 'shaped', 'tassel', 'quartz', 'muffin', 'lights', 'hoodie', 'burlap', 'wrench', 'shorts', 'hotdog', 'lemons', 'turnip', 'cookie', 'salmon', 'abacus', 'guitar', 'paddle', 'boxers', 'cherry', 'liquid', 'helmet', 'folder', 'silver', 'record', 'floors', 'middle', 'eraser', 'hinged', 'carton', 'wicker', 'coffee', 'smoker', 'tender', 'zipper', 'public', 'pastry', 'mallet', 'mussel', 'flakes', 'system', 'snacks', 'pebble', 'cereal', 'mixing', 'window', 'sandal', 'orange', 'toilet', 'fennel', 'cooker', 'puzzle', 'oyster', 'switch', 'barley', 'funnel', 'blower', 'infant', 'shaker', 'sensor', 'butter', 'jigger', 'ground', 'mirror', 'soccer', 'pallet', 'garage', 'longue', 'urinal', 'celery', 'bikini', 'shears', 'dental', 'waffle', 'handle', 'noodle', 'stairs', 'easter', 'socket', 'boiled', 'poster', 'drawer', 'chisel', 'holder', 'tackle', 'breast', 'pickle', 'plugin', 'jigsaw', 'collar', 'mortar', 'pepper', 'teapot', 'trowel', 'credit', 'screen', 'boxing', 'walker', 'garlic', 'laptop', 'server', 'deicer', 'omelet', 'pruner', 'makeup', 'chaise', 'shrimp', 'tennis', 'feeder', 'sticky', 'gloves', 'yogurt', 'pencil', 'icicle', 'powder', 'carafe', 'leaves', 'jersey', 'ginger', 'bucket', 'diaper', 'shower', 'grains', 'medium', 'pellet', 'honing', 'dahlia', 'gaming', 'chilli', 'router', 'icetea', 'pickup', 'figure', 'baking', 'cymbal', 'violin', 'frying', 'bottle', 'kettle', 'spirit', 'ticket', 'washer', 'burner', 'durian', 'carrot', 'statue', 'basket', 'blouse', 'roller', 'squash', 'webcam', 'candle', 'jacket', 'ladder', 'kidney', 'thread', 'dipper', 'loofah', 'tights', 'branch', 'ripsaw', 'pommel', 'heater', 'cactus', 'peanut', 'canned', 'walnut', 'pillar', 'cooler', 'cloves', 'hammer', 'wreath', 'hummus', 'hiking', 'letter', 'teacup', 'cotton', 'weight', 'fillet', 'juicer', 'cheese', 'crayon', 'bottom', 'garden', 'tinsel', 'camera', 'wading', 'analog', 'sponge', 'wallet', 'center', 'locker', 'copper', 'tripod', 'filter', 'raisin', 'rubber', 'ribbon', 'hockey', 'beaker', 'catsup', 'output', 'sodium', 'turkey', 'quiche', 'vacuum', 'saucer', 'papaya', 'sliced', 'hammam', 'grated', 'racket', 'motion', 'onesie'}
+    
+    if part in common_6char_words:
+        return False
+    
+    return True
+
+def remove_trailing_numbers(part: str) -> str:
+    """Remove numbers from the end of a string."""
+    # Find the last non-digit character
+    last_alpha_idx = -1
+    for i in range(len(part) - 1, -1, -1):
+        if not part[i].isdigit():
+            last_alpha_idx = i
+            break
+    
+    if last_alpha_idx >= 0:
+        return part[:last_alpha_idx + 1]
+    else:
+        # All digits, return original (shouldn't happen due to earlier checks)
+        return part
+
+def process_name_part(part: str, position: int, total_parts: int, all_parts: list) -> str:
+    """
+    Process a single part of an object name with advanced logic.
+    
+    Args:
+        part: The part to process
+        position: Position in the parts list (0-indexed)
+        total_parts: Total number of parts
+        all_parts: All parts for context
+        
+    Returns:
+        str: Cleaned part or None if should be removed
+    """
+    # Skip empty parts
+    if not part:
+        return None
+    
+    # Skip pure numbers at the end (like "_90", "_1")
+    if part.isdigit():
+        return None
+    
+    # Handle robot special case: keep meaningful robot IDs like "r1", "r2"
+    if position > 0 and any(prev_part in ['robot', 'agent', 'player'] for prev_part in all_parts[:position]):
+        if part.startswith('r') and len(part) <= 3 and part[1:].isdigit():
+            return part  # Keep "r1", "r2", etc.
+    
+    # Detect and remove 6-character strange strings (like "tynnnw")
+    if len(part) == 6 and is_strange_string(part) and position != 0:
+        return None
+    
+    # Remove numbers from the end of meaningful parts
+    # But keep the meaningful part (e.g., "processor90" -> "processor")
+    cleaned = remove_trailing_numbers(part)
+    
+    # Only keep if it has meaningful content
+    if len(cleaned) >= 2 and cleaned.isalpha():
+        return cleaned
+    
+    # Special case: if it's a very short part and not obviously garbage, keep it
+    if len(part) <= 3 and part.isalpha():
+        return part
+    
+    return None
+
+def format_object_name(name: str) -> str:
+    """
+    Format object name for natural language with advanced pattern recognition.
+    
+    Handles specific patterns:
+    - robot_r1 -> "robot r1" (keep meaningful suffixes, remove underscores)
+    - food_processor_90 -> "food processor" (remove numeric suffixes)
+    - top_cabinet_tynnnw_1 -> "top cabinet" (remove 6-char strange strings + numbers)
+    
+    Args:
+        name: Raw object name from scene graph
+        
+    Returns:
+        str: Formatted object name with "the" article
+    """
+    if not name:
+        return "the object"
+    
+    # Convert to lowercase for processing
+    original_name = name
+    name = name.lower()
+    
+    # Split by underscores
+    parts = name.split('_')
+    
+    if len(parts) == 1:
+        # No underscores, just clean and return
+        cleaned = clean_single_part(parts[0])
+        return f"the {cleaned}" if cleaned else "the object"
+    
+    cleaned_parts = []
+    
+    # Process each part with advanced logic
+    for i, part in enumerate(parts):
+        cleaned_part = process_name_part(part, i, len(parts), parts)
+        if cleaned_part:
+            cleaned_parts.append(cleaned_part)
+    
+    if not cleaned_parts:
+        print(f"No cleaned parts found for {original_name}")
+        exit()
+    
+    return " ".join(cleaned_parts)
+
+
+def overlay_bboxes_with_names(
+    img: np.ndarray,
+    bbox_2d_data: List[Tuple[int, int, int, int, int]],
+    instance_mapping: Dict[int, str],
+    task_relevant_objects: List[str],
+) -> np.ndarray:
+    """
+    Overlays bounding boxes with object names on the given image.
+
+    Args:
+        img (np.ndarray): The input image (RGB) to overlay on.
+        bbox_2d_data (List[Tuple[int, int, int, int, int]]): Bounding box data with format (x1, y1, x2, y2, instance_id)
+        instance_mapping (Dict[int, str]): Mapping from instance ID to object name
+        task_relevant_objects (List[str]): List of task relevant objects
+    Returns:
+        np.ndarray: The image with bounding boxes and object names overlaid.
+    """
+    # Create a copy of the image to draw on
+    overlay_img = img.copy()
+    img_height, img_width = img.shape[:2]
+
+    # Track occupied text regions to avoid overlap
+    occupied_text_regions = []
+
+    # Process each bounding box
+    for bbox in bbox_2d_data:
+        x1, y1, x2, y2, instance_id = bbox
+        object_name = instance_mapping[instance_id]
+        # Only overlay task relevant objects
+        if object_name not in task_relevant_objects:
+            continue
+
+        # Generate a consistent color based on instance_id
+        color = get_consistent_color(instance_id)
+
+        object_name = format_object_name(object_name)
+
+        # Draw the bounding box
+        cv2.rectangle(overlay_img, (x1, y1), (x2, y2), color, 2)
+
+        # Draw the object name
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.5
+        font_thickness = 1
+        text_size = cv2.getTextSize(object_name, font, font_scale, font_thickness)[0]
+        # Find non-overlapping position for text
+        text_x, text_y, text_rect = find_non_overlapping_text_position(
+            x1, y1, x2, y2, text_size, occupied_text_regions, img_height, img_width
+        )
+        # Add this text region to occupied regions
+        occupied_text_regions.append(text_rect)
+
+        # Draw background rectangle for text
+        cv2.rectangle(
+            overlay_img, (int(text_rect[0]), int(text_rect[1])), (int(text_rect[2]), int(text_rect[3])), color, -1
+        )
+
+        # Draw the text
+        cv2.putText(
+            overlay_img,
+            object_name,
+            (text_x, text_y),
+            font,
+            font_scale,
+            (255, 255, 255),
+            font_thickness,
+            cv2.LINE_AA,
+        )
+
+    return overlay_img
+
+def overlay_bboxes(
+    img: np.ndarray,
+    bbox_2d_data: List[Tuple[int, int, int, int, int]],
+    instance_mapping: Dict[int, str],
+    task_relevant_objects: List[str],
+    in_place: bool = False,
+) -> np.ndarray:
+    """
+    Overlays bounding boxes on the given image for task-relevant objects.
+
+    Args:
+        img (np.ndarray): The input image (RGB) to overlay on.
+        bbox_2d_data (List[Tuple[int, int, int, int, int]]): Bounding box data
+            with format (x1, y1, x2, y2, instance_id).
+        instance_mapping (Dict[int, str]): Mapping from instance ID to object name.
+        task_relevant_objects (List[str]): List of task-relevant objects.
+        in_place (bool): If True, modifies the input image directly instead of creating a copy.
+
+    Returns:
+        np.ndarray: The image with bounding boxes overlaid.
+    """
+    # Create a copy of the image to draw on, unless in_place is True
+    overlay_img = img if in_place else img.copy()
+
+    # Process each bounding box
+    for bbox in bbox_2d_data:
+        x1, y1, x2, y2, instance_id = bbox
+        object_name = instance_mapping.get(instance_id)
+
+        # Only overlay task-relevant objects
+        if object_name not in task_relevant_objects:
+            continue
+
+        # Generate a consistent color based on instance_id
+        color = get_consistent_color(instance_id)
+
+        # Draw the bounding box
+        cv2.rectangle(overlay_img, (x1, y1), (x2, y2), color, 2)
+
+    return overlay_img
+
+def overlay_segmentation_mask(
+    img: np.ndarray,
+    visibility_matrix: th.Tensor,
+    unique_ins_ids: List[int],
+    instance_mapping: Dict[int, str],
+    task_relevant_objects: List[str],
+    in_place: bool = False,
+) -> np.ndarray:
+    """
+    Overlays segmentation mask on the given image for task-relevant objects.
+    
+    Args:
+        img (np.ndarray): The input image (RGB) to overlay on.
+        visibility_matrix (th.Tensor): (H, W) tensor of instance IDs.
+        unique_ins_ids (List[int]): List of unique instance IDs in the current view.
+        instance_mapping (Dict[int, str]): Mapping from instance ID to object name.
+        task_relevant_objects (List[str]): List of task-relevant objects.
+        in_place (bool): If True, modifies the input image directly instead of creating a copy.
+    
+    Returns:
+        np.ndarray: The image with segmentation masks overlaid.
+    """
+    overlay_img = img if in_place else img.copy()
+    
+    # Convert visibility matrix to numpy if it's a tensor
+    if isinstance(visibility_matrix, th.Tensor):
+        vis_matrix = visibility_matrix.cpu().numpy()
+    else:
+        vis_matrix = visibility_matrix
+    
+    # Process each unique instance ID
+    valid_ids = [id for id in instance_mapping if id in unique_ins_ids]
+    
+    for instance_id in valid_ids:
+        object_name = instance_mapping.get(instance_id)
+        
+        # Only overlay task-relevant objects
+        if object_name not in task_relevant_objects:
+            continue
+        
+        # Create mask for this instance
+        mask = (vis_matrix == instance_id)
+        if not mask.any():
+            continue
+        
+        # Generate consistent color for this instance
+        color = get_consistent_color(instance_id)
+        
+        # Apply 50% transparency overlay where mask is true
+        alpha = 0.5
+        
+        # Blend the colors: (1-alpha) * original + alpha * overlay_color
+        overlay_img[mask] = ((1.0 - alpha) * overlay_img[mask].astype(np.float32) + 
+                            alpha * np.array(color, dtype=np.float32)).astype(overlay_img.dtype)
+    
+    return overlay_img
+
 def calculate_delta_e(
     obs_ids: th.Tensor,
     rgb_image: th.Tensor,
@@ -339,91 +748,3 @@ def calculate_delta_e(
     return delta_e_scores
 
 
-def colorize_bboxes_3d(bbox_3d_data, rgb_image, camera_params):
-    """
-    Project 3D bounding box data onto 2D and colorize the bounding boxes for visualization.
-    Reference: https://forums.developer.nvidia.com/t/mathematical-definition-of-3d-bounding-boxes-annotator-nvidia-omniverse-isaac-sim/223416
-
-    Args:
-        bbox_3d_data (th.tensor): 3D bounding box data
-        rgb_image (th.tensor): RGB image
-        camera_params (dict): Camera parameters
-
-    Returns:
-        th.tensor: RGB image with 3D bounding boxes drawn
-    """
-
-    def world_to_image_pinhole(world_points, camera_params):
-        # Project corners to image space (assumes pinhole camera model)
-        proj_mat = camera_params["cameraProjection"].reshape(4, 4)
-        view_mat = camera_params["cameraViewTransform"].reshape(4, 4)
-        view_proj_mat = view_mat @ proj_mat
-        world_points_homo = th.nn.functional.pad(world_points, (0, 1, 0, 0), value=1.0)
-        tf_points = th.dot(world_points_homo, view_proj_mat)
-        tf_points = tf_points / (tf_points[..., -1:])
-        return 0.5 * (tf_points[..., :2] + 1)
-
-    def draw_lines_and_points_for_boxes(img, all_image_points):
-        width, height = img.size
-        draw = ImageDraw.Draw(img)
-
-        # Define connections between the corners of the bounding box
-        connections = [
-            (0, 1),
-            (1, 3),
-            (3, 2),
-            (2, 0),  # Front face
-            (4, 5),
-            (5, 7),
-            (7, 6),
-            (6, 4),  # Back face
-            (0, 4),
-            (1, 5),
-            (2, 6),
-            (3, 7),  # Side edges connecting front and back faces
-        ]
-
-        # Calculate the number of bounding boxes
-        num_boxes = len(all_image_points) // 8
-
-        # Generate random colors for each bounding box
-        from omni.replicator.core import random_colours
-
-        box_colors = random_colours(num_boxes, enable_random=True, num_channels=3)
-
-        # Ensure colors are in the correct format for drawing (255 scale)
-        box_colors = [(int(r), int(g), int(b)) for r, g, b in box_colors]
-
-        # Iterate over each set of 8 points (each bounding box)
-        for i in range(0, len(all_image_points), 8):
-            image_points = all_image_points[i : i + 8]
-            image_points[:, 1] = height - image_points[:, 1]  # Flip Y-axis to match image coordinates
-
-            # Use a distinct color for each bounding box
-            line_color = box_colors[i // 8]
-
-            # Draw lines for each connection
-            for start, end in connections:
-                draw.line(
-                    (image_points[start][0], image_points[start][1], image_points[end][0], image_points[end][1]),
-                    fill=line_color,
-                    width=2,
-                )
-
-    rgb = Image.fromarray(rgb_image)
-
-    # Get 3D corners
-    from omni.syntheticdata.scripts.helpers import get_bbox_3d_corners
-
-    corners_3d = get_bbox_3d_corners(bbox_3d_data)
-    corners_3d = corners_3d.reshape(-1, 3)
-
-    # Project to image space
-    corners_2d = world_to_image_pinhole(corners_3d, camera_params)
-    width, height = rgb.size
-    corners_2d *= th.tensor([[width, height]])
-
-    # Now, draw all bounding boxes
-    draw_lines_and_points_for_boxes(rgb, corners_2d)
-
-    return th.tensor(rgb)

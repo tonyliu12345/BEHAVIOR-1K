@@ -113,10 +113,10 @@ def replay_hdf5_file(hdf_input_path):
     metrics_output_path = os.path.join(folder_path, f"qa_metrics.json")
 
     # Move original HDF5 file to the new folder
-    new_hdf_input_path = os.path.join(folder_path, base_name)
-    if hdf_input_path != new_hdf_input_path:  # Avoid copying if already in target folder
-        os.rename(hdf_input_path, new_hdf_input_path)
-        hdf_input_path = new_hdf_input_path
+    # new_hdf_input_path = os.path.join(folder_path, base_name)
+    # if hdf_input_path != new_hdf_input_path:  # Avoid copying if already in target folder
+    #     os.rename(hdf_input_path, new_hdf_input_path)
+    #     hdf_input_path = new_hdf_input_path
     
     # Define resolution for consistency
     RESOLUTION_DEFAULT = 512
@@ -138,7 +138,7 @@ def replay_hdf5_file(hdf_input_path):
     # Robot sensor configuration
     robot_sensor_config = {
         "VisionSensor": {
-            "modalities": ["rgb"],
+            "modalities": ["rgb", "seg_instance"],
             "sensor_kwargs": {
                 "image_height": RESOLUTION_WRIST,
                 "image_width": RESOLUTION_WRIST,
@@ -149,7 +149,7 @@ def replay_hdf5_file(hdf_input_path):
     # Generate external sensors config automatically
     external_sensors_config = []
     for i, (position, orientation) in enumerate(external_camera_poses):
-        continue
+        # continue
         external_sensors_config.append({
             "sensor_type": "VisionSensor",
             "name": f"external_sensor{i}",
@@ -171,13 +171,13 @@ def replay_hdf5_file(hdf_input_path):
         "sensor_type": "VisionSensor",
         "name": f"external_sensor{idx}",
         "relative_prim_path": f"/controllable__r1pro__robot_r1/zed_link/external_sensor{idx}",
-        "modalities": ["rgb"],
+        "modalities": ["rgb", "seg_instance"],
         "sensor_kwargs": {
             "image_height": RESOLUTION_DEFAULT,
             "image_width": RESOLUTION_DEFAULT,
             "horizontal_aperture": 40.0,
         },
-        "position": th.tensor([0.06, 0.0, 0.01], dtype=th.float32),
+        "position": th.tensor([0.06, 0.01, 0.15], dtype=th.float32),
         "orientation": th.tensor([-1.0, 0.0, 0.0, 0.0], dtype=th.float32),
         "pose_frame": "parent",
     })
@@ -219,12 +219,13 @@ def replay_hdf5_file(hdf_input_path):
             include_task_obs=False,
             include_robot_control=False,
             include_contacts=True,
+            full_scene_file=full_scene_file,
         )
     else:
         env = DataPlaybackWrapper.create_from_hdf5(
             input_path=hdf_input_path,
             output_path=hdf_output_path,
-            robot_obs_modalities=["rgb"],
+            robot_obs_modalities=["rgb", "seg_instance"],
             robot_sensor_config=robot_sensor_config,
             external_sensors_config=external_sensors_config,
             exclude_sensor_names=["zed"],
@@ -298,7 +299,9 @@ def replay_hdf5_file(hdf_input_path):
 
     # Create video writers for external cameras
     for i in range(len(external_sensors_config)):
-        camera_name = f"external_sensor{i+1}"
+        if i == 0:
+            continue
+        camera_name = f"external_sensor{i}"
         video_writers.append(env.create_video_writer(fpath=f"{video_dir}/{camera_name}.mp4"))
         video_rgb_keys.append(f"external::{camera_name}::rgb")
         frame_writers.append(env.create_frame_writer(output_dir=f"{video_dir}/{camera_name}/"))
@@ -313,8 +316,8 @@ def replay_hdf5_file(hdf_input_path):
 
     replay_config = {
         "record_visibility": True,
-        "record_rgb_keys": ["external::external_sensor0::rgb", "external::external_sensor1::rgb"],
-        "sensors": ["external_sensor0", "external_sensor1"],
+        "record_rgb_keys": ["external::external_sensor1::rgb"],
+        "sensors": ["external_sensor1"],
     }
 
     start_frame = None
@@ -345,7 +348,7 @@ def replay_hdf5_file(hdf_input_path):
                 # frame_rgb_keys=None,
                 # start_frame=start_frame,
                 # end_frame=end_frame,
-                # replay_config=replay_config,
+                replay_config=replay_config,
             )
     # Close all video writers
     for writer in video_writers:
@@ -372,7 +375,7 @@ def main():
     parser.add_argument("--dir", help="Directory containing HDF5 files to process")
     parser.add_argument("--files", nargs="*", help="Individual HDF5 file(s) to process")
 
-    default_files = ["/home/mll-laptop-1/01_projects/03_behavior_challenge/BehaviorEQA_raw_files/laptop_0/assembling_gift_baskets_1749468508582193.hdf5"]
+    default_files = ["/home/mll-laptop-1/01_projects/03_behavior_challenge/BehaviorEQA_raw_files/laptop_0/canning_food_1751278778230696.hdf5"]
     # default_dir = "/home/mll-laptop-1/01_projects/03_behavior_challenge/raw_demos/Jul_2_demos/cleaning_up_plates_and_food_1747365183765658_cleaning_up_plates_and_food.hdf5"
     
     args = parser.parse_args()

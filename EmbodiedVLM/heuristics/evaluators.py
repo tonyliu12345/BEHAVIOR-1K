@@ -2,9 +2,8 @@
 This script is the class definition for the online verifier for ordering task.
 """
 
-from typing import List, Dict, Any, Optional, Tuple, Set
+from typing import List, Dict, Any, Optional, Tuple, Set, Union
 from pathlib import Path
-import scipy.stats
 import numpy as np
 import json
 import re
@@ -24,7 +23,7 @@ class TaskWiseOrderingVerifier:
     An input sequence is correct if:
     1. The input sequence is the same as the correct sequence.
     2. The input sequence can reflect the correct sequence, that is, the diffs of the correct sequence is an subset of the diffs of the input sequence.
-    3. NEW: The input sequence has high correlation (Kendall's Tau) or high LCS similarity with the correct sequence.
+    3. The input sequence has high similarity with the correct sequence.
     """
     
     def __init__(
@@ -73,82 +72,115 @@ class TaskWiseOrderingVerifier:
             signatures.append(signature)
         return signatures
 
-    def _calculate_kendall_tau(self, correct_sequence: List[int], input_sequence: List[int]) -> float:
-        """
-        Calculate Kendall's Tau correlation coefficient between two sequences.
-        
-        Args:
-            correct_sequence: Ground truth sequence
-            input_sequence: Predicted sequence
-            
-        Returns:
-            Kendall's Tau value (-1 to 1)
-        """
-        if len(correct_sequence) != len(input_sequence):
-            return 0.0
-        
-        tau, _ = scipy.stats.kendalltau(correct_sequence, input_sequence)
-        return tau if not np.isnan(tau) else 0.0
 
-    def _calculate_normalized_lcs(self, correct_sequence: List[int], input_sequence: List[int]) -> float:
+    
+    def _calculate_pair_correct_ratio_with_alignment(
+        self,
+        correct_signatures: List[Set[str]],
+        input_signatures: List[Set[str]],
+        correct_full_signatures: List[Set[str]] = None
+    ) -> float:
         """
-        Calculate normalized Longest Common Subsequence (LCS) between two sequences.
+        Calculate pair correct ratio using optimal alignment between sequences of different lengths.
+        Uses dynamic programming to find the best alignment that maximizes correct pairs.
         
         Args:
-            correct_sequence: Ground truth sequence
-            input_sequence: Predicted sequence
+            correct_signatures: Ground truth signatures (partial diff)
+            input_signatures: Input signatures (partial or full diff)
+            correct_full_signatures: Ground truth full signatures (for inverse dynamics)
             
         Returns:
-            Normalized LCS score (0 to 1)
+            Ratio of correctly aligned pairs (0 to 1)
         """
-        m, n = len(correct_sequence), len(input_sequence)
-        if m == 0 or n == 0:
+        if not correct_signatures or not input_signatures:
             return 0.0
+            
+        m, n = len(correct_signatures), len(input_signatures)
         
-        # Dynamic programming table for LCS
+        # Use full signatures for comparison if provided (inverse dynamics)
+        comparison_signatures = correct_full_signatures if correct_full_signatures else correct_signatures
+        
+        # DP table to track maximum correct pairs
+        # dp[i][j] = max correct pairs using first i correct signatures and first j input signatures
         dp = [[0] * (n + 1) for _ in range(m + 1)]
         
+        # Fill DP table
         for i in range(1, m + 1):
             for j in range(1, n + 1):
-                if correct_sequence[i - 1] == input_sequence[j - 1]:
-                    dp[i][j] = dp[i - 1][j - 1] + 1
-                else:
-                    dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+                # Option 1: Don't align current signatures
+                dp[i][j] = max(dp[i-1][j], dp[i][j-1])
+                
+                # Option 2: Align current signatures if they match
+                if correct_signatures[i-1].issubset(input_signatures[j-1]):
+                    dp[i][j] = max(dp[i][j], dp[i-1][j-1] + 1)
+                elif correct_full_signatures and input_signatures[j-1].issubset(comparison_signatures[i-1]):
+                    dp[i][j] = max(dp[i][j], dp[i-1][j-1] + 1)
         
-        # Normalize by the maximum possible length
-        return dp[m][n] / max(m, n)
+        # The maximum possible pairs is the minimum of the two sequence lengths
+        max_possible_pairs = max(m, n)
+        return dp[m][n] / max_possible_pairs if max_possible_pairs > 0 else 0.0
 
     def verify_forward(
         self,
-        shuffled_frame_id_sequence: List[str],
+        correct_frame_id_sequence: List[str],
         correct_state_idx_sequence: List[int],
-        input_state_idx_sequence: List[int]
-    ) -> Dict[str, Any]:
+        input_state_idx_sequence: List[int],
+        return_signatures: bool = False
+    ) -> Tuple[Dict[str, Any], Union[Dict[str, Any], None]]:
         """
         Verify if the input sequence is correct for forward dynamics.
         
         Args:
-            shuffled_frame_id_sequence: The shuffled frame sequence for this specific question
+            correct_frame_id_sequence: The correct (unshuffled) frame sequence [x, y, z]
             correct_state_idx_sequence: Ground truth answer (1-indexed)
             input_state_idx_sequence: Predicted answer (1-indexed)
             
         Returns:
             Dictionary containing evaluation results with raw scores
         """
-        # Convert to 0-indexed
-        correct_sequence = [idx - 1 for idx in correct_state_idx_sequence]
-        input_sequence = [idx - 1 for idx in input_state_idx_sequence]
+        # Reconstruct the actual shuffled sequence from the correct sequence and correct indices
+        # correct_frame_id_sequence is the correct sequence [x, y, z]
+        # correct_state_idx_sequence tells us the mapping to reconstruct shuffled sequence
+        
+        # Reconstruct what the shuffled sequence should look like
+        # If correct_state_idx_sequence is [2, 1], it means shuffled[2]=y, shuffled[1]=z
+        # So shuffled sequence should be [x, z, y] to make [shuffled[0], shuffled[2], shuffled[1]] = [x, y, z]
+        actual_shuffled_sequence = [None] * len(correct_frame_id_sequence)
+        actual_shuffled_sequence[0] = correct_frame_id_sequence[0]  # Current state is always first
+        
+        # Reconstruct the shuffled positions
+        for i, correct_idx in enumerate(correct_state_idx_sequence):
+            if i + 1 < len(correct_frame_id_sequence):  # Skip if we're out of bounds
+                actual_shuffled_sequence[correct_idx] = correct_frame_id_sequence[i + 1]
+        
+        # Fill any remaining None values (shouldn't happen in correct data)
+        for i in range(len(actual_shuffled_sequence)):
+            if actual_shuffled_sequence[i] is None:
+                raise ValueError(f"Actual shuffled sequence is not fully reconstructed. Missing frame at index {i}")
+
+        correct_sequence = correct_state_idx_sequence
+        input_sequence = input_state_idx_sequence
 
         # Calculate exact match
         exact_match = correct_sequence == input_sequence
+        equal_length = len(correct_sequence) == len(input_sequence)
         
-        # Calculate semantic match
+        # Initialize all variables at method level to avoid scope issues
         semantic_match = False
-        if len(correct_sequence) == len(input_sequence):
+        relative_correct_ratio = 0
+        correct_signatures = []
+        input_signatures = []
+        correct_frame_id_sequence = []
+        input_frame_id_sequence = []
+        if equal_length:
             try:
-                # Convert indices to frame sequences
-                correct_frame_id_sequence = [shuffled_frame_id_sequence[idx] for idx in correct_sequence]
-                input_frame_id_sequence = [shuffled_frame_id_sequence[idx] for idx in input_sequence]
+                # Convert indices to frame sequences using the reconstructed shuffled sequence
+                correct_frame_id_sequence = [actual_shuffled_sequence[idx] for idx in correct_sequence]
+                input_frame_id_sequence = [actual_shuffled_sequence[idx] for idx in input_sequence]
+
+                # append the current state to the frame id sequence at the beginning
+                correct_frame_id_sequence.insert(0, actual_shuffled_sequence[0])
+                input_frame_id_sequence.insert(0, actual_shuffled_sequence[0])
 
                 # Get signatures for both sequences
                 correct_signatures = self._translate_sequence_to_signatures(correct_frame_id_sequence, partial_diff=True)
@@ -161,51 +193,101 @@ class TaskWiseOrderingVerifier:
                     if not correct_signatures[i].issubset(input_signatures[i]):
                         semantic_match = False
                         break
+
+                # Original approach for equal length sequences
+                correct_pairs = 0
+                for i in range(len(correct_signatures)):
+                    if correct_signatures[i].issubset(input_signatures[i]):
+                        correct_pairs += 1
+                total_pairs = len(correct_sequence)
+                relative_correct_ratio = correct_pairs / total_pairs if total_pairs > 0 else 0
             except Exception as e:
                 semantic_match = False
 
         # Combined match result: True if either exact OR semantic match
         match = exact_match or semantic_match
 
-        # Calculate correlation metrics (raw scores, no thresholding)
-        kendall_tau = self._calculate_kendall_tau(correct_sequence, input_sequence)
-        normalized_lcs = self._calculate_normalized_lcs(correct_sequence, input_sequence)
+        # calculate relative correct ratio for adjacent two states
+        if not equal_length:
+            # New approach for different length sequences using alignment
+            try:
+                # Convert indices to frame sequences using the reconstructed shuffled sequence
+                correct_frame_id_sequence = [actual_shuffled_sequence[idx] for idx in correct_sequence]
+                input_frame_id_sequence = [actual_shuffled_sequence[idx] for idx in input_sequence]
+                correct_frame_id_sequence.insert(0, actual_shuffled_sequence[0])
+                input_frame_id_sequence.insert(0, actual_shuffled_sequence[0])
+
+                # Get signatures for both sequences
+                correct_signatures = self._translate_sequence_to_signatures(correct_frame_id_sequence, partial_diff=True)
+                input_signatures = self._translate_sequence_to_signatures(input_frame_id_sequence, partial_diff=False)
+
+                # Use alignment-based calculation
+                relative_correct_ratio = self._calculate_pair_correct_ratio_with_alignment(
+                    correct_signatures, input_signatures
+                )
+            except Exception as e:
+                relative_correct_ratio = 0
 
 
         if match:
-            kendall_tau = 1
-            normalized_lcs = 1
+            relative_correct_ratio = 1
 
         results = {
             'exact_match': exact_match,
             'semantic_match': semantic_match,
             'match': match,  # Combined match result
-            'kendall_tau': kendall_tau,  # Raw score
-            'normalized_lcs': normalized_lcs  # Raw score
+            'pair_correct_ratio': relative_correct_ratio
         }
-
-        return results
+        if return_signatures:
+            correct_signatures = [list(signature) for signature in correct_signatures]
+            if equal_length:
+                input_visible_signatures = self._translate_sequence_to_signatures(input_frame_id_sequence, partial_diff=True)
+                ## convert to serializable format
+                input_visible_signatures = [list(signature) for signature in input_visible_signatures]
+                input_signatures = [list(signature) for signature in input_signatures]
+                sig_dict = {
+                    'equal_length': equal_length,
+                    'correct_signatures': correct_signatures,
+                    'input_signatures': input_visible_signatures
+                }
+                return results, sig_dict
+            else:
+                sig_dict = {
+                    'equal_length': equal_length,
+                    'correct_signatures': correct_signatures,
+                    'input_signatures': []
+                }
+                return results, sig_dict
+        return results, None
 
     def verify_inverse(
         self,
         correct_frame_id_sequence: List[str],
         correct_action_idx_sequence: List[int],
-        input_action_idx_sequence: List[int]
-    ) -> Dict[str, Any]:
+        input_action_idx_sequence: List[int],
+        return_signatures: bool = False
+    ) -> Tuple[Dict[str, Any], Union[Dict[str, Any], None]]:
         """
         Verify inverse dynamics ordering
         In the future, this could implement different logic for inverse dynamics.
         """
-        # Convert to 0-indexed
+        # Convert to 0-indexed (this is correct implementation, as following part are all working on the diff signatures, which is 1 less than correct frame id sequence)
         correct_sequence = [idx - 1 for idx in correct_action_idx_sequence]
         input_sequence = [idx - 1 for idx in input_action_idx_sequence]
 
+
         # Calculate exact match
         exact_match = correct_sequence == input_sequence
+        equal_length = len(correct_sequence) == len(input_sequence)
         
-        # Calculate semantic match for inverse dynamics
+        # Initialize all variables at method level to avoid scope issues
         semantic_match = False
-        if len(correct_sequence) == len(input_sequence):
+        relative_correct_ratio = 0
+        correct_signatures = []
+        correct_full_signatures = []
+        input_signatures = []
+        shuffled_signatures = []
+        if equal_length:
             try:
                 # Get signatures ordered by the correct action sequence
                 correct_signatures = self._translate_sequence_to_signatures(correct_frame_id_sequence, partial_diff=True)
@@ -240,6 +322,7 @@ class TaskWiseOrderingVerifier:
                 semantic_match = True
                 if len(correct_signatures) != len(input_signatures):
                     semantic_match = False
+
                 else:
                     for i in range(len(input_signatures)): # logic is different from foward dynamics
                         # as long as the input action sequence can describe the states, it is correct
@@ -248,29 +331,83 @@ class TaskWiseOrderingVerifier:
                             semantic_match = False
                             break
 
+                correct_pairs = 0
+                for i in range(len(input_signatures)):
+                    if input_signatures[i].issubset(correct_full_signatures[i]):
+                        correct_pairs += 1
+                total_pairs = len(correct_sequence)
+                relative_correct_ratio = correct_pairs / total_pairs if total_pairs > 0 else 0
+
             except Exception as e:
                 semantic_match = False
         
         # Combined match result: True if either exact OR semantic match
         match = exact_match or semantic_match
 
-        # Calculate correlation metrics (raw scores, no thresholding)
-        kendall_tau = self._calculate_kendall_tau(correct_sequence, input_sequence)
-        normalized_lcs = self._calculate_normalized_lcs(correct_sequence, input_sequence)
+        # calculate relative correct ratio for adjacent two states
+        if not equal_length:
+            # New approach for different length sequences using alignment
+            try:
+                # Get signatures for both sequences
+                correct_signatures = self._translate_sequence_to_signatures(correct_frame_id_sequence, partial_diff=True)
+                correct_full_signatures = self._translate_sequence_to_signatures(correct_frame_id_sequence, partial_diff=False)
+                
+                # Create a mapping from correct action indices to signature positions
+                shuffled_signatures = [None] * len(correct_signatures)
+                for i, action_idx in enumerate(correct_sequence):
+                    if 0 <= action_idx < len(correct_signatures):
+                        shuffled_signatures[action_idx] = correct_signatures[i]
+                
+                # Remove any None entries (in case of invalid indices)
+                shuffled_signatures = [sig for sig in shuffled_signatures if sig is not None]
+                
+                # Now get the input signatures based on the input sequence
+                input_signatures = [None] * len(shuffled_signatures)
+                for i, action_idx in enumerate(input_sequence):
+                    if 0 <= action_idx < len(shuffled_signatures):
+                        input_signatures[i] = shuffled_signatures[action_idx]
+                
+                # Remove any None entries (in case of invalid indices)
+                input_signatures = [sig for sig in input_signatures if sig is not None]
+                
+                # Use alignment-based calculation
+                relative_correct_ratio = self._calculate_pair_correct_ratio_with_alignment(
+                    correct_signatures, input_signatures, correct_full_signatures
+                )
+            except Exception as e:
+                relative_correct_ratio = 0
 
         if match:
-            kendall_tau = 1
-            normalized_lcs = 1
+            relative_correct_ratio = 1
 
         results = {
             'exact_match': exact_match,
             'semantic_match': semantic_match,
             'match': match,  # Combined match result
-            'kendall_tau': kendall_tau,  # Raw score
-            'normalized_lcs': normalized_lcs  # Raw score
+            'pair_correct_ratio': relative_correct_ratio
         }
 
-        return results
+        if return_signatures:
+            # convert to serializable format
+            correct_signatures = [list(signature) for signature in correct_signatures]
+            if equal_length:
+                correct_full_signatures = [list(signature) for signature in correct_full_signatures]
+                input_signatures = [list(signature) for signature in input_signatures]
+                sig_dict = {
+                    'equal_length': equal_length,
+                    'correct_signatures': correct_signatures,
+                    'input_signatures': input_signatures
+                }
+                return results, sig_dict
+            else:
+                sig_dict = {
+                    'equal_length': equal_length,
+                    'correct_signatures': correct_signatures,
+                    'input_signatures': []
+                }
+                return results, sig_dict
+
+        return results, None
 
 
 class OrderingEvaluator:
@@ -297,8 +434,9 @@ class OrderingEvaluator:
         self.eval_results = {}  # Cache for evaluation results
         self._verifiers_cache = {}  # Cache for TaskWiseOrderingVerifier instances
         self.skipped_items = []  # Track skipped items with reasons
+        self.wrong_case_signatures = {}  # Track wrong case signatures
         
-    def _parse_answer_string(self, answer_str: str) -> Optional[List[int]]:
+    def _parse_answer_string(self, answer_str: Union[str, list], gt_length: int) -> Optional[List[int]]:
         """
         Extract a Python list from the answer string.
         
@@ -308,6 +446,9 @@ class OrderingEvaluator:
         Returns:
             Optional[List[int]]: Extracted list or None if parsing fails
         """
+        if isinstance(answer_str, list):
+            return answer_str
+        
         if not answer_str or not isinstance(answer_str, str):
             return None
             
@@ -320,6 +461,10 @@ class OrderingEvaluator:
                 # Take the last match and evaluate it
                 list_str = matches[-1]
                 parsed_list = ast.literal_eval(list_str)
+
+                if len(parsed_list) > gt_length:
+                    diff = len(parsed_list) - gt_length
+                    parsed_list = parsed_list[diff:]
                 
                 # Ensure it's a list of integers
                 if isinstance(parsed_list, list) and all(isinstance(x, int) for x in parsed_list):
@@ -481,12 +626,13 @@ class OrderingEvaluator:
             
         return verifiers
         
-    def evaluate(self, jsonl_path: str) -> None:
+    def evaluate(self, jsonl_path: str, analyze_wrong_case: bool = False) -> None:
         """
         Main evaluation method that processes the entire JSONL file.
         
         Args:
             jsonl_path (str): Path to the JSONL evaluation file
+            analyze_wrong_case (bool): Whether to analyze wrong case signatures
         """
         print(f"Starting evaluation of {jsonl_path}")
         
@@ -565,7 +711,7 @@ class OrderingEvaluator:
                         continue
                         
                     # Parse the model's answer
-                    parsed_answer = self._parse_answer_string(answer)
+                    parsed_answer = self._parse_answer_string(answer, len(gt_answer))
                     if parsed_answer is None:
                         print(f"Line {line_num}: Failed to parse answer '{answer}', skipping")
                         error_count += 1
@@ -581,12 +727,31 @@ class OrderingEvaluator:
                         
                     # Perform verification
                     verifier = verifiers[task_name]
+
+                    if data_id == "sorting_vegetables_1753928918914038_forward_dynamics_ordering_3_steps_5e2a15bf":
+                        pass
                     
                     # Determine which verification method to use based on task type
                     if task_type and 'inverse' in task_type.lower():
-                        eval_result = verifier.verify_inverse(key_frame_ids, gt_answer, parsed_answer)
+                        eval_result, sig_dict = verifier.verify_inverse(key_frame_ids, gt_answer, parsed_answer, return_signatures=analyze_wrong_case)
                     else:
-                        eval_result = verifier.verify_forward(key_frame_ids, gt_answer, parsed_answer)
+                        eval_result, sig_dict = verifier.verify_forward(key_frame_ids, gt_answer, parsed_answer, return_signatures=analyze_wrong_case)
+
+                    if analyze_wrong_case:
+                        wrong_case_entry = {
+                            'id': data_id,
+                            'type': task_type,
+                            'task_name': task_name,
+                            'key_frame_ids': key_frame_ids,
+                            'gt_answer': gt_answer,
+                            'parsed_answer': parsed_answer,
+                            'raw_answer': answer,
+                            'eval_metrics': eval_result,
+                            'equal_length': sig_dict.get('equal_length', False),
+                            'correct_signatures': sig_dict.get('correct_signatures', None),
+                            'input_signatures': sig_dict.get('input_signatures', None)
+                        }
+                        self.wrong_case_signatures[data_id] = wrong_case_entry
                     
                     # Store the complete result
                     result_entry = {
@@ -751,8 +916,7 @@ class OrderingEvaluator:
                 type_groups[question_type][step_num]['match'].append(eval_metrics.get('match', False))
                 type_groups[question_type][step_num]['exact_match'].append(eval_metrics.get('exact_match', False))
                 type_groups[question_type][step_num]['semantic_match'].append(eval_metrics.get('semantic_match', False))
-                type_groups[question_type][step_num]['kendall_tau'].append(eval_metrics.get('kendall_tau', 0.0))
-                type_groups[question_type][step_num]['normalized_lcs'].append(eval_metrics.get('normalized_lcs', 0.0))
+                type_groups[question_type][step_num]['pair_correct_ratio'].append(eval_metrics.get('pair_correct_ratio', 0.0))
                 
         # Calculate comprehensive statistics for each group
         report = {}
@@ -765,26 +929,18 @@ class OrderingEvaluator:
                 match_results = metrics_data['match']
                 exact_match_results = metrics_data['exact_match']
                 semantic_match_results = metrics_data['semantic_match']
-                kendall_tau_values = metrics_data['kendall_tau']
-                lcs_values = metrics_data['normalized_lcs']
-                
+                pair_correct_ratio_values = metrics_data['pair_correct_ratio']
                 stats['count'] = len(match_results)
                 stats['overall_accuracy'] = sum(match_results) / len(match_results) if match_results else 0.0
                 stats['exact_match_accuracy'] = sum(exact_match_results) / len(exact_match_results) if exact_match_results else 0.0
                 stats['semantic_match_accuracy'] = sum(semantic_match_results) / len(semantic_match_results) if semantic_match_results else 0.0
-                
+                stats['pair_correct_ratio'] = sum(pair_correct_ratio_values) / len(pair_correct_ratio_values) if pair_correct_ratio_values else 0.0
                 # Calculate correlation statistics
-                if kendall_tau_values:
-                    stats['avg_kendall_tau'] = np.mean(kendall_tau_values)
-                    stats['std_kendall_tau'] = np.std(kendall_tau_values)
-                    stats['min_kendall_tau'] = np.min(kendall_tau_values)
-                    stats['max_kendall_tau'] = np.max(kendall_tau_values)
-                
-                if lcs_values:
-                    stats['avg_normalized_lcs'] = np.mean(lcs_values)
-                    stats['std_normalized_lcs'] = np.std(lcs_values)
-                    stats['min_normalized_lcs'] = np.min(lcs_values)
-                    stats['max_normalized_lcs'] = np.max(lcs_values)
+                if pair_correct_ratio_values:
+                    stats['avg_pair_correct_ratio'] = np.mean(pair_correct_ratio_values)
+                    stats['std_pair_correct_ratio'] = np.std(pair_correct_ratio_values)
+                    stats['min_pair_correct_ratio'] = np.min(pair_correct_ratio_values)
+                    stats['max_pair_correct_ratio'] = np.max(pair_correct_ratio_values)
                 
                 report[question_type][step_num] = stats
                 
@@ -813,9 +969,7 @@ class OrderingEvaluator:
                 task_groups[task_name]['match'].append(eval_metrics.get('match', False))
                 task_groups[task_name]['exact_match'].append(eval_metrics.get('exact_match', False))
                 task_groups[task_name]['semantic_match'].append(eval_metrics.get('semantic_match', False))
-                task_groups[task_name]['kendall_tau'].append(eval_metrics.get('kendall_tau', 0.0))
-                task_groups[task_name]['normalized_lcs'].append(eval_metrics.get('normalized_lcs', 0.0))
-                
+                task_groups[task_name]['pair_correct_ratio'].append(eval_metrics.get('pair_correct_ratio', 0.0))
         # Calculate comprehensive statistics for each task
         report = {}
         for task_name, metrics_data in task_groups.items():
@@ -825,29 +979,220 @@ class OrderingEvaluator:
             match_results = metrics_data['match']
             exact_match_results = metrics_data['exact_match']
             semantic_match_results = metrics_data['semantic_match']
-            kendall_tau_values = metrics_data['kendall_tau']
-            lcs_values = metrics_data['normalized_lcs']
-            
+            pair_correct_ratio_values = metrics_data['pair_correct_ratio']
             stats['count'] = len(match_results)
             stats['overall_accuracy'] = sum(match_results) / len(match_results) if match_results else 0.0
             stats['exact_match_accuracy'] = sum(exact_match_results) / len(exact_match_results) if exact_match_results else 0.0
             stats['semantic_match_accuracy'] = sum(semantic_match_results) / len(semantic_match_results) if semantic_match_results else 0.0
-            
+            stats['pair_correct_ratio'] = sum(pair_correct_ratio_values) / len(pair_correct_ratio_values) if pair_correct_ratio_values else 0.0
             # Calculate correlation statistics
-            if kendall_tau_values:
-                stats['avg_kendall_tau'] = np.mean(kendall_tau_values)
-                stats['std_kendall_tau'] = np.std(kendall_tau_values)
-                stats['min_kendall_tau'] = np.min(kendall_tau_values)
-                stats['max_kendall_tau'] = np.max(kendall_tau_values)
-            
-            if lcs_values:
-                stats['avg_normalized_lcs'] = np.mean(lcs_values)
-                stats['std_normalized_lcs'] = np.std(lcs_values)
-                stats['min_normalized_lcs'] = np.min(lcs_values)
-                stats['max_normalized_lcs'] = np.max(lcs_values)
+            if pair_correct_ratio_values:
+                stats['avg_pair_correct_ratio'] = np.mean(pair_correct_ratio_values)
+                stats['std_pair_correct_ratio'] = np.std(pair_correct_ratio_values)
+                stats['min_pair_correct_ratio'] = np.min(pair_correct_ratio_values)
+                stats['max_pair_correct_ratio'] = np.max(pair_correct_ratio_values)
             
             report[task_name] = stats
             
+        return report
+    
+    def report_by_ablation_task(self) -> Dict[str, Dict[str, Dict[str, Dict[str, Any]]]]:
+        """
+        Generate comprehensive statistics report grouped by ablation settings, dynamics type, and step settings.
+        Prints detailed accuracy and correlation values for each ablation-dynamics-step combination.
+        
+        Returns:
+            Dict[str, Dict[str, Dict[str, Dict[str, Any]]]]: Nested dictionary {ablation_setting: {dynamics_type: {step_num: {metric: value}}}}
+        """
+        if not self.eval_results:
+            print("No evaluation results found. Please run evaluate() first.")
+            return {}
+            
+        # Group by ablation setting, dynamics type, and step number
+        ablation_dynamics_step_groups = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(list))))
+        
+        for result in self.eval_results.values():
+            data_id = result.get('id', '')
+            task_type = result.get('type', '')
+            eval_metrics = result.get('eval_metrics', {})
+            
+            if not data_id or not task_type or not eval_metrics:
+                continue
+                
+            # Extract ablation setting from ID (last part after final underscore)
+            # e.g., "canning_food_1751278778230696_forward_dynamics_ordering_3_steps_9be5cb1f_same_no_name"
+            ablation_setting = 'unknown'
+            if '_' in data_id:
+                ablation_setting = '_'.join(data_id.split('_')[9:])
+            
+            # Extract dynamics type from task_type
+            dynamics_type = 'unknown'
+            if 'forward' in task_type.lower():
+                dynamics_type = 'forward_dynamics'
+            elif 'inverse' in task_type.lower():
+                dynamics_type = 'inverse_dynamics'
+                
+            # Parse task type to extract step number (e.g., "forward_dynamics_ordering_3_steps")
+            parts = task_type.split('_')
+            step_num = 'unknown'
+            if len(parts) >= 2:
+                # Look for step information in the task type
+                for part in parts:
+                    if 'step' in part.lower():
+                        # Extract number from step part
+                        step_digits = ''.join(filter(str.isdigit, part))
+                        if step_digits:
+                            step_num = step_digits
+                            break
+                
+                # If no explicit step info, try to extract any number from the task type
+                if step_num == 'unknown':
+                    for part in parts:
+                        if part.isdigit():
+                            step_num = part
+                            break
+                            
+            # Collect all metrics
+            ablation_dynamics_step_groups[ablation_setting][dynamics_type][step_num]['match'].append(eval_metrics.get('match', False))
+            ablation_dynamics_step_groups[ablation_setting][dynamics_type][step_num]['exact_match'].append(eval_metrics.get('exact_match', False))
+            ablation_dynamics_step_groups[ablation_setting][dynamics_type][step_num]['semantic_match'].append(eval_metrics.get('semantic_match', False))
+            ablation_dynamics_step_groups[ablation_setting][dynamics_type][step_num]['pair_correct_ratio'].append(eval_metrics.get('pair_correct_ratio', 0.0))
+                
+        # Calculate comprehensive statistics and print detailed results
+        report = {}
+        
+        print("\n" + "="*80)
+        print("📊 ABLATION TASK REPORT - DETAILED BREAKDOWN")
+        print("="*80)
+        
+        # Calculate normalization values across all steps and dynamics types
+        all_step_nums = set()
+        all_dynamics_types = set()
+        for ablation_setting, dynamics_groups in ablation_dynamics_step_groups.items():
+            for dynamics_type, step_groups in dynamics_groups.items():
+                all_dynamics_types.add(dynamics_type)
+                all_step_nums.update(step_groups.keys())
+        
+        # Sort step numbers and dynamics types for consistent ordering
+        sorted_step_nums = sorted(all_step_nums, key=lambda x: int(x) if x.isdigit() else float('inf'))
+        sorted_dynamics_types = sorted(all_dynamics_types)
+        
+        # Calculate normalization factors for each dynamics type and step combination
+        step_dynamics_normalizations = {}
+        for dynamics_type in sorted_dynamics_types:
+            step_dynamics_normalizations[dynamics_type] = {}
+            for step_num in sorted_step_nums:
+                step_accuracies = []
+                step_pair_correct_ratios = []
+                for ablation_setting, dynamics_groups in ablation_dynamics_step_groups.items():
+                    if dynamics_type in dynamics_groups and step_num in dynamics_groups[dynamics_type]:
+                        metrics_data = dynamics_groups[dynamics_type][step_num]
+                        if metrics_data['match']:
+                            accuracy = sum(metrics_data['match']) / len(metrics_data['match'])
+                            step_accuracies.append(accuracy)
+                        if metrics_data['pair_correct_ratio']:
+                            avg_pair_correct_ratio = np.mean(metrics_data['pair_correct_ratio'])
+                            step_pair_correct_ratios.append(avg_pair_correct_ratio)
+                
+                step_dynamics_normalizations[dynamics_type][step_num] = {
+                    'avg_accuracy': np.mean(step_accuracies) if step_accuracies else 0.0,
+                    'std_accuracy': np.std(step_accuracies) if step_accuracies else 0.0,
+                    'avg_pair_correct_ratio': np.mean(step_pair_correct_ratios) if step_pair_correct_ratios else 0.0,
+                    'std_pair_correct_ratio': np.std(step_pair_correct_ratios) if step_pair_correct_ratios else 0.0,
+                    'ablation_count': len(step_accuracies)
+                }
+        
+        # Print normalization summary for each dynamics type
+        # for dynamics_type in sorted_dynamics_types:
+        #     print(f"\n📈 STEP NORMALIZATION SUMMARY - {dynamics_type.upper().replace('_', ' ')}:")
+        #     print(f"{'Step':<8} {'Avg Acc':<10} {'Std Acc':<10} {'Avg Pair Correct Ratio':<12} {'Std Pair Correct Ratio':<12} {'Settings':<8}")
+        #     print("-" * 70)
+        #     for step_num in sorted_step_nums:
+        #         if step_num in step_dynamics_normalizations[dynamics_type]:
+        #             norm = step_dynamics_normalizations[dynamics_type][step_num]
+        #             print(f"{step_num:<8} {norm['avg_accuracy']:<10.4f} {norm['std_accuracy']:<10.4f} "
+        #                   f"{norm['avg_pair_correct_ratio']:<12.4f} {norm['std_pair_correct_ratio']:<12.4f} {norm['ablation_count']:<8}")
+        
+        # Process each ablation setting and print detailed results
+        sorted_ablation_settings = sorted(ablation_dynamics_step_groups.keys())
+        
+        for ablation_setting in sorted_ablation_settings:
+            print(f"\n🧪 ABLATION SETTING: {ablation_setting}")
+            print("=" * 60)
+            
+            dynamics_groups = ablation_dynamics_step_groups[ablation_setting]
+            ablation_report = {}
+            
+            # Process each dynamics type within this ablation setting
+            for dynamics_type in sorted_dynamics_types:
+                if dynamics_type not in dynamics_groups:
+                    continue
+                    
+                print(f"\n🔄 {dynamics_type.upper().replace('_', ' ')}:")
+                print("-" * 60)
+                
+                step_groups = dynamics_groups[dynamics_type]
+                dynamics_report = {}
+                
+                # Sort steps for this dynamics type
+                dynamics_step_nums = sorted(step_groups.keys(), key=lambda x: int(x) if x.isdigit() else float('inf'))
+                
+                # Print header
+                print(f"{'Step':<8} {'Count':<8} {'Accuracy':<10} {'Exact':<8} {'Semantic':<10} {'Pair Correct Ratio':<12}")
+                print("-" * 70)
+                
+                for step_num in dynamics_step_nums:
+                    metrics_data = step_groups[step_num]
+                    stats = {}
+                    
+                    # Calculate accuracy metrics
+                    match_results = metrics_data['match']
+                    exact_match_results = metrics_data['exact_match']
+                    semantic_match_results = metrics_data['semantic_match']
+                    pair_correct_ratio_values = metrics_data['pair_correct_ratio']
+                    stats['count'] = len(match_results)
+                    stats['overall_accuracy'] = sum(match_results) / len(match_results) if match_results else 0.0
+                    stats['exact_match_accuracy'] = sum(exact_match_results) / len(exact_match_results) if exact_match_results else 0.0
+                    stats['semantic_match_accuracy'] = sum(semantic_match_results) / len(semantic_match_results) if semantic_match_results else 0.0
+                    stats['pair_correct_ratio'] = sum(pair_correct_ratio_values) / len(pair_correct_ratio_values) if pair_correct_ratio_values else 0.0
+                    
+                    # Calculate correlation statistics
+                    if pair_correct_ratio_values:
+                        stats['avg_pair_correct_ratio'] = np.mean(pair_correct_ratio_values)
+                        stats['std_pair_correct_ratio'] = np.std(pair_correct_ratio_values)
+                        stats['min_pair_correct_ratio'] = np.min(pair_correct_ratio_values)
+                        stats['max_pair_correct_ratio'] = np.max(pair_correct_ratio_values)
+                    else:
+                        stats['avg_pair_correct_ratio'] = 0.0
+                        stats['std_pair_correct_ratio'] = 0.0
+                        stats['min_pair_correct_ratio'] = 0.0
+                        stats['max_pair_correct_ratio'] = 0.0
+
+                    
+                    # Add normalization information
+                    if dynamics_type in step_dynamics_normalizations and step_num in step_dynamics_normalizations[dynamics_type]:
+                        norm = step_dynamics_normalizations[dynamics_type][step_num]
+                        stats['normalized_accuracy'] = (stats['overall_accuracy'] - norm['avg_accuracy']) / norm['std_accuracy'] if norm['std_accuracy'] > 0 else 0.0
+                        stats['normalized_pair_correct_ratio'] = (stats['avg_pair_correct_ratio'] - norm['avg_pair_correct_ratio']) / norm['std_pair_correct_ratio'] if norm['std_pair_correct_ratio'] > 0 else 0.0
+                    else:
+                        stats['normalized_accuracy'] = 0.0
+                        stats['normalized_pair_correct_ratio'] = 0.0
+                    
+                    dynamics_report[step_num] = stats
+                    
+                    # Print row
+                    print(f"{step_num:<8} {stats['count']:<8} {stats['overall_accuracy']:<10.4f} "
+                          f"{stats['exact_match_accuracy']:<8.4f} {stats['semantic_match_accuracy']:<10.4f} "
+                          f"{stats['avg_pair_correct_ratio']:<12.4f}")
+                
+                ablation_report[dynamics_type] = dynamics_report
+            
+            report[ablation_setting] = ablation_report
+        
+        print("\n" + "="*80)
+        print("📋 REPORT COMPLETE")
+        print("="*80)
+                
         return report
         
     def report_overall_score(self) -> Dict[str, Any]:
@@ -874,8 +1219,8 @@ class OrderingEvaluator:
                 continue
             
             # Collect all metrics for overall statistics
-            for metric_name in ['match', 'exact_match', 'semantic_match', 'kendall_tau', 'normalized_lcs']:
-                metric_value = eval_metrics.get(metric_name, 0.0 if metric_name in ['kendall_tau', 'normalized_lcs'] else False)
+            for metric_name in ['exact_match', 'semantic_match', 'match', 'pair_correct_ratio']:
+                metric_value = eval_metrics.get(metric_name, 0.0 if metric_name in ['pair_correct_ratio'] else False)
                 all_metrics[metric_name].append(metric_value)
                 
                 if 'forward' in task_type:
@@ -893,14 +1238,10 @@ class OrderingEvaluator:
                 'overall_accuracy': sum(all_metrics['match']) / len(all_metrics['match']),
                 'exact_match_accuracy': sum(all_metrics['exact_match']) / len(all_metrics['exact_match']),
                 'semantic_match_accuracy': sum(all_metrics['semantic_match']) / len(all_metrics['semantic_match']),
-                'avg_kendall_tau': np.mean(all_metrics['kendall_tau']),
-                'std_kendall_tau': np.std(all_metrics['kendall_tau']),
-                'min_kendall_tau': np.min(all_metrics['kendall_tau']),
-                'max_kendall_tau': np.max(all_metrics['kendall_tau']),
-                'avg_normalized_lcs': np.mean(all_metrics['normalized_lcs']),
-                'std_normalized_lcs': np.std(all_metrics['normalized_lcs']),
-                'min_normalized_lcs': np.min(all_metrics['normalized_lcs']),
-                'max_normalized_lcs': np.max(all_metrics['normalized_lcs'])
+                'avg_pair_correct_ratio': np.mean(all_metrics['pair_correct_ratio']),
+                'std_pair_correct_ratio': np.std(all_metrics['pair_correct_ratio']),
+                'min_pair_correct_ratio': np.min(all_metrics['pair_correct_ratio']),
+                'max_pair_correct_ratio': np.max(all_metrics['pair_correct_ratio'])
             }
         
         # Forward dynamics statistics
@@ -910,14 +1251,10 @@ class OrderingEvaluator:
                 'overall_accuracy': sum(forward_metrics['match']) / len(forward_metrics['match']),
                 'exact_match_accuracy': sum(forward_metrics['exact_match']) / len(forward_metrics['exact_match']),
                 'semantic_match_accuracy': sum(forward_metrics['semantic_match']) / len(forward_metrics['semantic_match']),
-                'avg_kendall_tau': np.mean(forward_metrics['kendall_tau']),
-                'std_kendall_tau': np.std(forward_metrics['kendall_tau']),
-                'min_kendall_tau': np.min(forward_metrics['kendall_tau']),
-                'max_kendall_tau': np.max(forward_metrics['kendall_tau']),
-                'avg_normalized_lcs': np.mean(forward_metrics['normalized_lcs']),
-                'std_normalized_lcs': np.std(forward_metrics['normalized_lcs']),
-                'min_normalized_lcs': np.min(forward_metrics['normalized_lcs']),
-                'max_normalized_lcs': np.max(forward_metrics['normalized_lcs'])
+                'avg_pair_correct_ratio': np.mean(forward_metrics['pair_correct_ratio']),
+                'std_pair_correct_ratio': np.std(forward_metrics['pair_correct_ratio']),
+                'min_pair_correct_ratio': np.min(forward_metrics['pair_correct_ratio']),
+                'max_pair_correct_ratio': np.max(forward_metrics['pair_correct_ratio'])
             }
         
         # Inverse dynamics statistics
@@ -927,14 +1264,10 @@ class OrderingEvaluator:
                 'overall_accuracy': sum(inverse_metrics['match']) / len(inverse_metrics['match']),
                 'exact_match_accuracy': sum(inverse_metrics['exact_match']) / len(inverse_metrics['exact_match']),
                 'semantic_match_accuracy': sum(inverse_metrics['semantic_match']) / len(inverse_metrics['semantic_match']),
-                'avg_kendall_tau': np.mean(inverse_metrics['kendall_tau']),
-                'std_kendall_tau': np.std(inverse_metrics['kendall_tau']),
-                'min_kendall_tau': np.min(inverse_metrics['kendall_tau']),
-                'max_kendall_tau': np.max(inverse_metrics['kendall_tau']),
-                'avg_normalized_lcs': np.mean(inverse_metrics['normalized_lcs']),
-                'std_normalized_lcs': np.std(inverse_metrics['normalized_lcs']),
-                'min_normalized_lcs': np.min(inverse_metrics['normalized_lcs']),
-                'max_normalized_lcs': np.max(inverse_metrics['normalized_lcs'])
+                'avg_pair_correct_ratio': np.mean(inverse_metrics['pair_correct_ratio']),
+                'std_pair_correct_ratio': np.std(inverse_metrics['pair_correct_ratio']),
+                'min_pair_correct_ratio': np.min(inverse_metrics['pair_correct_ratio']),
+                'max_pair_correct_ratio': np.max(inverse_metrics['pair_correct_ratio'])
             }
                 
         return report

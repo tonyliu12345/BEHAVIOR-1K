@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Directory containing HDF5 files
-HDF5_DIR="/home/mll-laptop-1/01_projects/03_behavior_challenge/replayed_trajectories"
+HDF5_DIR="/home/mll-laptop-1/01_projects/03_behavior_challenge/BehaviorEQA_raw_files/laptop_0"
 
 # Path to the replay script
 REPLAY_SCRIPT="joylo/scripts/og_data_replay_example.py"
