@@ -4,7 +4,7 @@ Improved version that can import obj file and articulated file (glb, gltf).
 """
 
 import pathlib
-from typing import Literal
+from typing import Literal, Optional
 import click
 import shutil
 import tempfile
@@ -48,6 +48,12 @@ from omnigibson.utils.asset_conversion_utils import (
 @click.option("--check_scale", is_flag=True, help="Check meshes scale based on heuristic")
 @click.option("--rescale", is_flag=True, help="Rescale meshes based on heuristic if check_scale ")
 @click.option("--overwrite", is_flag=True, help="Overwrite any pre-existing files")
+@click.option(
+    "--extra-metadata-json",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="If specified, path to additional metadata json file to include in the imported asset's metadata.",
+)
 def import_custom_object(
     asset_path: str,
     category: str,
@@ -60,6 +66,7 @@ def import_custom_object(
     check_scale: bool,
     rescale: bool,
     overwrite: bool,
+    extra_metadata_json: Optional[str] = None,
 ):
     """
     Imports a custom-defined object asset into an OmniGibson-compatible USD format and saves the imported asset
@@ -111,6 +118,7 @@ def import_custom_object(
             hull_count=hull_count,
             overwrite=overwrite,
             use_usda=False,
+            extra_metadata_json=extra_metadata_json,
         )
 
     finally:

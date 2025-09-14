@@ -2216,36 +2216,11 @@ def generate_urdf_for_mesh(
     new_scale = 1.0
 
     if check_scale:
-        # Find the link with the biggest bounding box
-        bbox_size = visual_mesh.bounding_box.extents
-
-        click.echo(f"Visual mesh bounding box size: {bbox_size}")
-
-        # Check if any dimension is too large (> 100)
-        if any(size > 5.0 for size in bbox_size):
-            if any(size > 50.0 for size in bbox_size):
-                if any(size > 500.0 for size in bbox_size):
-                    new_scale = 0.001
-                else:
-                    new_scale = 0.01
-            else:
-                new_scale = 0.1
-
-            click.echo(
-                "Warning: The bounding box sounds a bit large. "
-                "We just wanted to confirm this is intentional. You can skip this check by passing check_scale = False."
-            )
-
-        # Check if any dimension is too small (< 0.01)
-        elif all(size < 0.005 for size in bbox_size):
-            new_scale = 1000.0
-            click.echo(
-                "Warning: The bounding box sounds a bit small. "
-                "We just wanted to confirm this is intentional. You can skip this check by passing check_scale = False."
-            )
-
-        else:
-            click.echo("Size is reasonable, no scaling")
+        bbox = visual_mesh.bounding_box.extents
+        x_dim = bbox[0]
+        target_dim = 0.5
+        new_scale = target_dim / x_dim
+        click.echo(f"Original bbox: {bbox}, target X size: {target_dim}, new scale based on bbox check: {new_scale}")
 
     # Rescale mesh if rescale= True, else scale based on function input scale
     if rescale:
@@ -2331,7 +2306,7 @@ def generate_urdf_for_mesh(
     return str(urdf_path)
 
 
-def record_obj_metadata_from_urdf(urdf_path, obj_dir, joint_setting="zero", overwrite=False):
+def record_obj_metadata_from_urdf(urdf_path, obj_dir, joint_setting="zero", overwrite=False, extra_metadata_json=None):
     """
     Records object metadata and writes it to misc/metadata.json within the object directory.
 
@@ -2341,6 +2316,7 @@ def record_obj_metadata_from_urdf(urdf_path, obj_dir, joint_setting="zero", over
         joint_setting (str): Setting for joints when calculating canonical metadata. Valid options
             are {"low", "zero", "high"} (i.e.: lower joint limit, all 0 values, or upper joint limit)
         overwrite (bool): Whether to overwrite any pre-existing data
+        extra_metadata_json (None or str): If specified, path to additional metadata json file
     """
     # Load the URDF file into urdfpy
     robot = URDF.load(urdf_path)
@@ -2368,9 +2344,39 @@ def record_obj_metadata_from_urdf(urdf_path, obj_dir, joint_setting="zero", over
     # BBox size is simply the extent of the overall AABB
     bbox_size = scene.bounding_box.extents
 
+    # Load the additional metadata file if it exists
+    meta_links = {}
+    if extra_metadata_json is not None:
+        with open(extra_metadata_json, "r") as f:
+            extra_metadata = json.load(f)
+
+        meta_links = extra_metadata["meta_links"]
+
+        # Scale and rotate as needed
+        base_link = robot.base_link
+        visual = base_link.visuals[0]
+        homogeneous_scale = th.tensor(visual.geometry.scale.tolist() + [1])
+        transform = th.as_tensor(visual.origin) @ th.diag(homogeneous_scale)
+
+        for meta_type, meta_link_id_to_subid in meta_links.items():
+            for meta_link_subid_to_link in meta_link_id_to_subid.values():
+                for meta_link in meta_link_subid_to_link:
+                    ml_pos = th.tensor(meta_link["position"])
+                    ml_quat = th.tensor(meta_link["orientation"])
+                    ml_mat = T.pose2mat((ml_pos, ml_quat))
+                    transformed_ml_mat = transform @ ml_mat
+                    transformed_ml_pos, transformed_ml_quat = T.mat2pose(transformed_ml_mat)
+                    meta_link["position"] = transformed_ml_pos.numpy().tolist()
+                    meta_link["orientation"] = transformed_ml_quat.numpy().tolist()
+
+                    if "size" in meta_link:
+                        meta_link["size"] = (
+                            th.tensor(meta_link["size"]) * th.tensor(visual.geometry.scale)
+                        ).numpy().tolist()
+
     # Save metadata json
     out_metadata = {
-        "meta_links": {},
+        "meta_links": meta_links,
         "link_tags": {},
         "object_parts": [],
         "base_link_offset": base_link_offset.tolist(),
@@ -2397,6 +2403,7 @@ def import_og_asset_from_urdf(
     hull_count=32,
     overwrite=False,
     use_usda=False,
+    extra_metadata_json=None,
 ):
     """
     Imports an asset from URDF format into OmniGibson-compatible USD format. This will write the new USD
@@ -2422,6 +2429,7 @@ def import_og_asset_from_urdf(
         overwrite (bool): If set, will overwrite any pre-existing files
         use_usda (bool): If set, will write files to .usda files instead of .usd
             (bigger memory footprint, but human-readable)
+        extra_metadata_json (None or str): If specified, path to additional metadata json file
 
     Returns:
         3-tuple:
@@ -2454,6 +2462,7 @@ def import_og_asset_from_urdf(
         obj_dir=model_dir,
         joint_setting="zero",
         overwrite=overwrite,
+        extra_metadata_json=extra_metadata_json,
     )
 
     # Convert to USD
