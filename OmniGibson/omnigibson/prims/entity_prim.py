@@ -210,19 +210,27 @@ class EntityPrim(XFormPrim):
                 # Mark this as a link to create (we'll determine exact class later)
                 links_to_create[link_name] = (PrimType.RIGID, prim)
 
-                # Also iterate through all children to infer joints and determine the children of those joints
-                # We will use this info to infer which link is the base link!
-                for child_prim in prim.GetChildren():
-                    if "joint" in child_prim.GetPrimTypeInfo().GetTypeName().lower():
-                        # Store the child target of this joint
-                        relationships = {r.GetName(): r for r in child_prim.GetRelationships()}
-                        # Only record if this is NOT a fixed link tying us to the world (i.e.: no target for body0)
-                        if len(relationships["physics:body0"].GetTargets()) > 0:
-                            joint_children.add(relationships["physics:body1"].GetTargets()[0].pathString.split("/")[-1])
-
             elif self._prim_type == PrimType.CLOTH and prim_type_name == "Mesh":
                 # For cloth objects, process Meshes as cloth links
                 links_to_create[link_name] = (PrimType.CLOTH, prim)
+
+        # Also iterate through all children to infer joints and determine the children of those joints
+        # We will use this info to infer which link is the base link!
+        def _recursively_find_joints(child_prim):
+            if not child_prim:
+                return
+
+            if "joint" in child_prim.GetPrimTypeInfo().GetTypeName().lower():
+                # Store the child target of this joint
+                relationships = {r.GetName(): r for r in child_prim.GetRelationships()}
+                # Only record if this is NOT a fixed link tying us to the world (i.e.: no target for body0)
+                if len(relationships["physics:body0"].GetTargets()) > 0:
+                    joint_children.add(relationships["physics:body1"].GetTargets()[0].pathString.split("/")[-1])
+
+            # Recursively call the function for each child
+            for second_child in child_prim.GetChildren():
+                _recursively_find_joints(second_child)
+        _recursively_find_joints(self._prim)
 
         # Infer the correct root link name -- this corresponds to whatever link does not have any joint existing
         # in the children joints
