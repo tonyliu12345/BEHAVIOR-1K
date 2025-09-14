@@ -2355,12 +2355,13 @@ def record_obj_metadata_from_urdf(urdf_path, obj_dir, joint_setting="zero", over
         # Scale and rotate as needed
         base_link = robot.base_link
         visual = base_link.visuals[0]
-        homogeneous_scale = th.tensor(visual.geometry.scale.tolist() + [1])
-        transform = th.as_tensor(visual.origin) @ th.diag(homogeneous_scale)
+        homogeneous_scale = th.tensor(visual.geometry.mesh.scale.tolist() + [1])
+        transform = th.tensor(visual.origin, dtype=th.float32) @ th.diag(homogeneous_scale)
 
-        for meta_type, meta_link_id_to_subid in meta_links.items():
-            for meta_link_subid_to_link in meta_link_id_to_subid.values():
-                for meta_link in meta_link_subid_to_link:
+        # TODO: Add support for other links
+        for meta_type, meta_link_id_to_subid in meta_links["base_link"].items():
+            for meta_id, meta_link_subid_to_link in meta_link_id_to_subid.items():
+                for meta_subid, meta_link in enumerate(meta_link_subid_to_link):
                     ml_pos = th.tensor(meta_link["position"])
                     ml_quat = th.tensor(meta_link["orientation"])
                     ml_mat = T.pose2mat((ml_pos, ml_quat))
@@ -2371,8 +2372,10 @@ def record_obj_metadata_from_urdf(urdf_path, obj_dir, joint_setting="zero", over
 
                     if "size" in meta_link:
                         meta_link["size"] = (
-                            th.tensor(meta_link["size"]) * th.tensor(visual.geometry.scale)
+                            th.tensor(meta_link["size"]) * th.tensor(visual.geometry.mesh.scale, dtype=th.float32)
                         ).numpy().tolist()
+                    
+                    print(f"Transformed meta link {meta_type}-{meta_id}-{meta_subid} to pos {meta_link['position']}")
 
     # Save metadata json
     out_metadata = {

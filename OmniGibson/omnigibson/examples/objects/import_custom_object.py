@@ -8,6 +8,7 @@ from typing import Literal, Optional
 import click
 import shutil
 import tempfile
+from OmniGibson.omnigibson.utils.asset_utils import get_dataset_path
 import omnigibson as og
 
 from omnigibson.utils.asset_conversion_utils import (
@@ -111,6 +112,7 @@ def import_custom_object(
 
         # Convert to USD
         import_og_asset_from_urdf(
+            dataset_root=get_dataset_path("simaffordance"),
             category=category,
             model=model,
             urdf_path=str(urdf_path),
@@ -130,6 +132,8 @@ def import_custom_object(
         click.echo("The asset has been successfully imported. You can view it and make changes and save if you'd like.")
         while True:
             og.sim.render()
+
+    breakpoint()
 
 
 if __name__ == "__main__":
