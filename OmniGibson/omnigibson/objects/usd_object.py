@@ -155,13 +155,13 @@ class USDObject(StatefulObject):
         Load the object into pybullet and set it to the correct pose
         """
         usdz_path = self._usd_path
-        basename = os.path.basename(usdz_path)
-        tempdir_path = tempfile.mkdtemp(basename, dir=og.tempdir)
 
         if self._encrypted:
             # Create a temporary file to store the decrytped asset, load it, and then delete it
             encrypted_filename = self._usd_path.replace(".usdz", ".usdz.encrypted")
             self.check_hash(encrypted_filename)
+            basename = os.path.basename(self._usd_path)
+            tempdir_path = tempfile.mkdtemp(basename, dir=og.tempdir)
             usdz_path = os.path.join(tempdir_path, f"{basename}.usdz")
             decrypt_file(encrypted_filename, usdz_path)
         else:
