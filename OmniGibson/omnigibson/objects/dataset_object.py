@@ -167,7 +167,7 @@ class DatasetObject(USDObject):
             str: Absolute filepath to the corresponding USD asset file
         """
         dataset_path = get_dataset_path(dataset_name)
-        return os.path.join(dataset_path, "objects", category, model, "usd", f"{model}.usdz")
+        return os.path.join(dataset_path, "objects", category, model, "usd", f"{model}.usdz" if dataset_name == "behavior-1k-assets" else f"{model}.usd")
 
     def sample_orientation(self):
         """
