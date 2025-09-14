@@ -154,7 +154,7 @@ class USDObject(StatefulObject):
         """
         Load the object into pybullet and set it to the correct pose
         """
-        usd_path = self._usd_path
+        usdz_path = self._usd_path
 
         if self._encrypted:
             # Create a temporary file to store the decrytped asset, load it, and then delete it
@@ -164,32 +164,32 @@ class USDObject(StatefulObject):
             tempdir_path = tempfile.mkdtemp(basename, dir=og.tempdir)
             usdz_path = os.path.join(tempdir_path, f"{basename}.usdz")
             decrypt_file(encrypted_filename, usdz_path)
-
-            # TODO: Undo this when we switch to Isaac Sim 5.0
-            # On Isaac 4.5, if you add a USDZ reference, the textures don't load correctly.
-            # So for now we unpack the USDZ and load the USD instead.
-            with zipfile.ZipFile(usdz_path, "r") as zip_ref:
-                zip_ref.extractall(tempdir_path)
-            os.unlink(usdz_path)
-
-            # There should be exactly one USD file there now.
-            usd_files = list(glob.glob(os.path.join(tempdir_path, "*.usd")))
-            assert len(usd_files) == 1, f"Expected exactly one USD file in {tempdir_path}, found {usd_files}"
-            usd_path = usd_files[0]
-
-            # Patch the weird MDL 0 prefix issue.
-            side_stage = lazy.pxr.Usd.Stage.Open(usd_path)
-
-            def _update_path(asset_path):
-                if asset_path.endswith(".mdl"):
-                    return os.path.basename(asset_path)
-                return asset_path
-
-            lazy.pxr.UsdUtils.ModifyAssetPaths(side_stage.GetRootLayer(), _update_path)
-            side_stage.Save()
-            del side_stage
         else:
-            self.check_hash(usd_path)
+            self.check_hash(usdz_path)
+
+        # TODO: Undo this when we switch to Isaac Sim 5.0
+        # On Isaac 4.5, if you add a USDZ reference, the textures don't load correctly.
+        # So for now we unpack the USDZ and load the USD instead.
+        with zipfile.ZipFile(usdz_path, "r") as zip_ref:
+            zip_ref.extractall(tempdir_path)
+        os.unlink(usdz_path)
+
+        # There should be exactly one USD file there now.
+        usd_files = list(glob.glob(os.path.join(tempdir_path, "*.usd")))
+        assert len(usd_files) == 1, f"Expected exactly one USD file in {tempdir_path}, found {usd_files}"
+        usd_path = usd_files[0]
+
+        # Patch the weird MDL 0 prefix issue.
+        side_stage = lazy.pxr.Usd.Stage.Open(usd_path)
+
+        def _update_path(asset_path):
+            if asset_path.endswith(".mdl"):
+                return os.path.basename(asset_path)
+            return asset_path
+
+        lazy.pxr.UsdUtils.ModifyAssetPaths(side_stage.GetRootLayer(), _update_path)
+        side_stage.Save()
+        del side_stage
 
         prim = add_asset_to_stage(asset_path=usd_path, prim_path=self.prim_path)
 
