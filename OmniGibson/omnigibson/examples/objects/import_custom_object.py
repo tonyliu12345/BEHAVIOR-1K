@@ -126,50 +126,6 @@ def import_custom_object(
             extra_metadata_json=extra_metadata_json,
         )
 
-        # Archive the output USD files to USDZ
-        usd_path2 = pathlib.Path(usd_path)
-        model_dir = usd_path2.parent.parent
-        moved_usd_path = model_dir / usd_path2.name
-        usdz_path = usd_path2.with_suffix(".usdz")
-
-        # Here we perform a trick where we first copy the USD file to a new location and then
-        # update its asset paths to be relative to the new location. This allows the usdz archiver
-        # to use relative paths instead of absolute ones.
-        shutil.copy(usd_path, moved_usd_path)
-        stage = lazy.pxr.Usd.Stage.Open(str(moved_usd_path))
-
-        # Now update the asset paths
-        materials_dir = (model_dir / "material").resolve()
-        def _update_path(asset_path):
-            # Compute the path that this path refers to
-            asset_full_path = (usd_path2.parent / asset_path).resolve()
-
-            # Check if that's a subpath of the materials dir. If not, return unchanged
-            try:
-                asset_full_path.relative_to(materials_dir)
-            except ValueError:
-                return asset_path
-            
-            # Return it relative to the new USD location
-            return str(asset_full_path.relative_to(model_dir.resolve()))
-
-        lazy.pxr.UsdUtils.ModifyAssetPaths(stage.GetRootLayer(), _update_path)
-        stage.Save()
-        del stage
-
-        # Convert USD to USDZ
-        print(f"Converting {moved_usd_path} to {usdz_path}")
-        lazy.pxr.UsdUtils.CreateNewUsdzPackage(str(moved_usd_path), str(usdz_path))
-
-        # Remove the MDL files from inside the USDZ. We want to load these from the
-        # OmniGibson installation instead of from the USDZ directly, since they have
-        # dependencies.
-        path_7za = pathlib.Path(__file__).parents[4] / "asset_pipeline" / "7zzs"
-        subprocess.run([str(path_7za), "d", str(usdz_path), "*.mdl"], check=True)
-
-        os.remove(usd_path)
-        os.remove(moved_usd_path)
-
     finally:
         # Clean up temp directories before exiting
         shutil.rmtree(temp_dir)
