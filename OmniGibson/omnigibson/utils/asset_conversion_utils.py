@@ -2337,6 +2337,14 @@ def record_obj_metadata_from_urdf(urdf_path, obj_dir, joint_setting="zero", over
     for mesh, transform in vfk.items():
         scene.add_geometry(geometry=mesh, transform=transform)
 
+    cfk = robot.collision_trimesh_fk(cfg=joint_cfg)
+    collision_meshes = []
+    for mesh, transform in cfk.items():
+        mesh_copy = mesh.copy()
+        mesh_copy.apply_transform(transform)
+        collision_meshes.append(mesh_copy)
+    collision_mesh = trimesh.boolean.union(collision_meshes, engine="manifold")
+
     # Base link offset is pos offset from robot root link -> overall AABB center
     # Since robot is placed at origin, this is simply the AABB centroid
     base_link_offset = scene.bounding_box.centroid
@@ -2369,7 +2377,11 @@ def record_obj_metadata_from_urdf(urdf_path, obj_dir, joint_setting="zero", over
                     ml_mat = T.pose2mat((ml_pos, ml_quat))
                     transformed_ml_mat = transform @ ml_mat
                     transformed_ml_pos, transformed_ml_quat = T.mat2pose(transformed_ml_mat)
-                    meta_link["position"] = transformed_ml_pos.numpy().tolist()
+
+                    # Project the point onto the collision mesh surface
+                    closest_point, distance, triangle_id = trimesh.proximity.closest_point(collision_mesh, transformed_ml_pos.numpy().reshape(1, 3))
+
+                    meta_link["position"] = closest_point.reshape(3).tolist()
                     meta_link["orientation"] = transformed_ml_quat.numpy().tolist()
 
                     if "size" in meta_link:
