@@ -130,7 +130,7 @@ def import_custom_object(
         usd_path2 = pathlib.Path(usd_path)
         model_dir = usd_path2.parent.parent
         moved_usd_path = model_dir / usd_path2.name
-        usdz_path = moved_usd_path.with_suffix(".usdz")
+        usdz_path = usd_path2.with_suffix(".usdz")
 
         # Here we perform a trick where we first copy the USD file to a new location and then
         # update its asset paths to be relative to the new location. This allows the usdz archiver
@@ -179,8 +179,6 @@ def import_custom_object(
         click.echo("The asset has been successfully imported. You can view it and make changes and save if you'd like.")
         while True:
             og.sim.render()
-
-    breakpoint()
 
 
 if __name__ == "__main__":
