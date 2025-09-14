@@ -2356,7 +2356,9 @@ def record_obj_metadata_from_urdf(urdf_path, obj_dir, joint_setting="zero", over
         base_link = robot.base_link
         visual = base_link.visuals[0]
         homogeneous_scale = th.tensor(visual.geometry.mesh.scale.tolist() + [1])
-        transform = th.tensor(visual.origin, dtype=th.float32) @ th.diag(homogeneous_scale)
+        # transform = th.tensor(visual.origin, dtype=th.float32) @ th.diag(homogeneous_scale)
+        # TODO: Here we assume the metadata is post-rotation. This is not a great assumption.
+        transform = th.diag(homogeneous_scale)
 
         # TODO: Add support for other links
         for meta_type, meta_link_id_to_subid in meta_links["base_link"].items():
@@ -2375,7 +2377,7 @@ def record_obj_metadata_from_urdf(urdf_path, obj_dir, joint_setting="zero", over
                             th.tensor(meta_link["size"]) * th.tensor(visual.geometry.mesh.scale, dtype=th.float32)
                         ).numpy().tolist()
                     
-                    print(f"Transformed meta link {meta_type}-{meta_id}-{meta_subid} to pos {meta_link['position']}")
+                    print(f"Transformed meta link {meta_type}-{meta_id}-{meta_subid} from pos {ml_pos} to pos {meta_link['position']}, scaled by {homogeneous_scale}")
 
     # Save metadata json
     out_metadata = {
