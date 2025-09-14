@@ -580,7 +580,7 @@ def _generate_meshes_for_primitive_meta_links(stage, obj_model, link_name, meta_
 
             _add_xform_properties(prim=prim)
             # Make sure mesh_prim has XForm properties
-            xform_prim = lazy.isaacsim.core.prims.xform_prim.XFormPrim(prim_path=prim_path)
+            xform_prim = lazy.isaacsim.core.prims.xform_prim.XFormPrim(prim_path)
 
             # Get the mesh/light pose in the parent link frame
             mesh_in_parent_link_pos, mesh_in_parent_link_orn = (
@@ -602,24 +602,24 @@ def _generate_meshes_for_primitive_meta_links(stage, obj_model, link_name, meta_
             )
 
             if is_light:
-                xform_prim.prim.GetAttribute("inputs:color").Set(
+                prim.GetAttribute("inputs:color").Set(
                     lazy.pxr.Gf.Vec3f(*(th.tensor(mesh_info["color"]) / 255.0).tolist())
                 )
-                xform_prim.prim.GetAttribute("inputs:intensity").Set(mesh_info["intensity"])
+                prim.GetAttribute("inputs:intensity").Set(mesh_info["intensity"])
                 if light_type == "Rect":
-                    xform_prim.prim.GetAttribute("inputs:width").Set(mesh_info["length"])
-                    xform_prim.prim.GetAttribute("inputs:height").Set(mesh_info["width"])
+                    prim.GetAttribute("inputs:width").Set(mesh_info["length"])
+                    prim.GetAttribute("inputs:height").Set(mesh_info["width"])
                 elif light_type == "Disk":
-                    xform_prim.prim.GetAttribute("inputs:radius").Set(mesh_info["length"])
+                    prim.GetAttribute("inputs:radius").Set(mesh_info["length"])
                 elif light_type == "Sphere":
-                    xform_prim.prim.GetAttribute("inputs:radius").Set(mesh_info["length"])
+                    prim.GetAttribute("inputs:radius").Set(mesh_info["length"])
                 else:
                     raise ValueError(f"Invalid light type: {light_type}")
             else:
                 if mesh_type == "Cylinder":
                     if not is_mesh:
-                        xform_prim.prim.GetAttribute("radius").Set(0.5)
-                        xform_prim.prim.GetAttribute("height").Set(1.0)
+                        prim.GetAttribute("radius").Set(0.5)
+                        prim.GetAttribute("height").Set(1.0)
                     if meta_link_type == "particlesource":
                         desired_radius = 0.0125
                         desired_height = 0.05
@@ -628,19 +628,19 @@ def _generate_meshes_for_primitive_meta_links(stage, obj_model, link_name, meta_
                         desired_radius = mesh_info["size"][0]
                         desired_height = mesh_info["size"][2]
                         height_offset = desired_height / 2.0
-                    xform_prim.prim.GetAttribute("xformOp:scale").Set(
+                    prim.GetAttribute("xformOp:scale").Set(
                         lazy.pxr.Gf.Vec3f(desired_radius * 2, desired_radius * 2, desired_height)
                     )
                     # Offset the position by half the height because in 3dsmax the origin of the cylinder is at the center of the base
                     mesh_in_meta_link_pos += T.quat_apply(mesh_in_meta_link_orn, th.tensor([0.0, 0.0, height_offset]))
                 elif mesh_type == "Cone":
                     if not is_mesh:
-                        xform_prim.prim.GetAttribute("radius").Set(0.5)
-                        xform_prim.prim.GetAttribute("height").Set(1.0)
+                        prim.GetAttribute("radius").Set(0.5)
+                        prim.GetAttribute("height").Set(1.0)
                     desired_radius = mesh_info["size"][0]
                     desired_height = mesh_info["size"][2]
                     height_offset = -desired_height / 2.0
-                    xform_prim.prim.GetAttribute("xformOp:scale").Set(
+                    prim.GetAttribute("xformOp:scale").Set(
                         lazy.pxr.Gf.Vec3f(desired_radius * 2, desired_radius * 2, desired_height)
                     )
                     # Flip the orientation of the z-axis because in 3dsmax the cone is pointing in the opposite direction
@@ -651,23 +651,23 @@ def _generate_meshes_for_primitive_meta_links(stage, obj_model, link_name, meta_
                     mesh_in_meta_link_pos += T.quat_apply(mesh_in_meta_link_orn, th.tensor([0.0, 0.0, height_offset]))
                 elif mesh_type == "Cube":
                     if not is_mesh:
-                        xform_prim.prim.GetAttribute("size").Set(1.0)
-                    xform_prim.prim.GetAttribute("xformOp:scale").Set(lazy.pxr.Gf.Vec3f(*mesh_info["size"]))
+                        prim.GetAttribute("size").Set(1.0)
+                    prim.GetAttribute("xformOp:scale").Set(lazy.pxr.Gf.Vec3f(*mesh_info["size"]))
                     height_offset = mesh_info["size"][2] / 2.0
                     mesh_in_meta_link_pos += T.quat_apply(mesh_in_meta_link_orn, th.tensor([0.0, 0.0, height_offset]))
                 elif mesh_type == "Sphere":
                     if not is_mesh:
-                        xform_prim.prim.GetAttribute("radius").Set(0.5)
+                        prim.GetAttribute("radius").Set(0.5)
                     desired_radius = mesh_info["size"][0]
-                    xform_prim.prim.GetAttribute("xformOp:scale").Set(
+                    prim.GetAttribute("xformOp:scale").Set(
                         lazy.pxr.Gf.Vec3f(desired_radius * 2, desired_radius * 2, desired_radius * 2)
                     )
                 else:
                     raise ValueError(f"Invalid mesh type: {mesh_type}")
 
-            xform_prim.set_local_pose(
-                translation=mesh_in_meta_link_pos,
-                orientation=mesh_in_meta_link_orn[[3, 0, 1, 2]],
+            xform_prim.set_local_poses(
+                translations=mesh_in_meta_link_pos.unsqueeze(0),
+                orientations=mesh_in_meta_link_orn[[3, 0, 1, 2]].unsqueeze(0),
             )
 
 
