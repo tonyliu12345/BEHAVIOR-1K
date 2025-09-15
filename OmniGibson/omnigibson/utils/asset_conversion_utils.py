@@ -2363,10 +2363,11 @@ def record_obj_metadata_from_urdf(urdf_path, obj_dir, joint_setting="zero", over
         # Scale and rotate as needed
         base_link = robot.base_link
         visual = base_link.visuals[0]
-        homogeneous_scale = th.tensor(visual.geometry.mesh.scale.tolist() + [1])
+        scale = th.tensor(visual.geometry.mesh.scale, dtype=th.float32)
+        # TODO: Here we assume the metadata is post-rotation and thus skip applying the transform.
+        # This is followed by applying the scale separately down the road. This is not a great assumption.
+        # homogeneous_scale = th.tensor(visual.geometry.mesh.scale.tolist() + [1])
         # transform = th.tensor(visual.origin, dtype=th.float32) @ th.diag(homogeneous_scale)
-        # TODO: Here we assume the metadata is post-rotation. This is not a great assumption.
-        transform = th.diag(homogeneous_scale)
 
         # TODO: Add support for other links
         for meta_type, meta_link_id_to_subid in meta_links["base_link"].items():
@@ -2374,9 +2375,11 @@ def record_obj_metadata_from_urdf(urdf_path, obj_dir, joint_setting="zero", over
                 for meta_subid, meta_link in enumerate(meta_link_subid_to_link):
                     ml_pos = th.tensor(meta_link["position"])
                     ml_quat = th.tensor(meta_link["orientation"])
-                    ml_mat = T.pose2mat((ml_pos, ml_quat))
-                    transformed_ml_mat = transform @ ml_mat
-                    transformed_ml_pos, transformed_ml_quat = T.mat2pose(transformed_ml_mat)
+                    # ml_mat = T.pose2mat((ml_pos, ml_quat))
+                    # transformed_ml_mat = transform @ ml_mat
+                    # transformed_ml_pos, transformed_ml_quat = T.mat2pose(transformed_ml_mat)
+                    transformed_ml_pos = ml_pos * scale
+                    transformed_ml_quat = ml_quat  # No rotation applied for now
 
                     # Project the point onto the collision mesh surface
                     closest_point, distance, triangle_id = trimesh.proximity.closest_point(collision_mesh, transformed_ml_pos.numpy().reshape(1, 3))
@@ -2385,11 +2388,10 @@ def record_obj_metadata_from_urdf(urdf_path, obj_dir, joint_setting="zero", over
                     meta_link["orientation"] = transformed_ml_quat.numpy().tolist()
 
                     if "size" in meta_link:
-                        meta_link["size"] = (
-                            th.tensor(meta_link["size"]) * th.tensor(visual.geometry.mesh.scale, dtype=th.float32)
-                        ).numpy().tolist()
+                        # TODO: This scale needs to be rotated to the frame of the mesh.
+                        meta_link["size"] = (th.tensor(meta_link["size"]) * scale).numpy().tolist()
                     
-                    print(f"Transformed meta link {meta_type}-{meta_id}-{meta_subid} from pos {ml_pos} to pos {meta_link['position']}, scaled by {homogeneous_scale}")
+                    print(f"Transformed meta link {meta_type}-{meta_id}-{meta_subid} from pos {ml_pos} to pos {meta_link['position']}, scaled by {scale}")
 
     # Save metadata json
     out_metadata = {
