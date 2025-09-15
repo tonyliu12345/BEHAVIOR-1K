@@ -2387,9 +2387,10 @@ def record_obj_metadata_from_urdf(urdf_path, obj_dir, joint_setting="zero", over
                     meta_link["position"] = closest_point.reshape(3).tolist()
                     meta_link["orientation"] = transformed_ml_quat.numpy().tolist()
 
-                    if "size" in meta_link:
-                        # TODO: This scale needs to be rotated to the frame of the mesh.
-                        meta_link["size"] = (th.tensor(meta_link["size"]) * scale).numpy().tolist()
+                    # TODO: Current size is not in the original scale but in the desired one, so we don't scale.
+                    # if "size" in meta_link:
+                    #     # TODO: This scale needs to be rotated to the frame of the mesh.
+                    #     meta_link["size"] = (th.tensor(meta_link["size"]) * scale).numpy().tolist()
                     
                     print(f"Transformed meta link {meta_type}-{meta_id}-{meta_subid} from pos {ml_pos} to pos {meta_link['position']}, scaled by {scale}")
 
