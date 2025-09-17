@@ -127,17 +127,17 @@ class R1ProT(BaseDevice):
         # Apply arm action + extra dimension from base.
         if isinstance(self.robot, R1):
             # Apply arm action
-            if(self.current_left_arm_pos is None or self.current_left_arm_pos.dim()!= 1 or self.current_left_arm_pos.numel() != 7
-                or self.current_right_arm_pos is None or self.current_right_arm_pos.dim()!= 1 or self.current_right_arm_pos.numel() != 7):
+            if(self.current_left_arm_pos is None or self.current_left_arm_pos.dim() != 1 or self.current_left_arm_pos.numel() != 7
+                or self.current_right_arm_pos is None or self.current_right_arm_pos.dim() != 1 or self.current_right_arm_pos.numel() != 7):
                 if self.current_left_arm_pos is None:
-                    print("❌ current_left_arm_pos is None")
+                    logger.debug("Current_left_arm_pos is None!")
                 else:
-                    print(f"ℹ️ current_left_arm_pos: dim={self.current_left_arm_pos.dim()}, shape={tuple(self.current_left_arm_pos.shape)}, numel={self.current_left_arm_pos.numel()} (expected dim=1 and numel=7)")
+                    logger.debug(f"Current_left_arm_pos: dim={self.current_left_arm_pos.dim()}, shape={tuple(self.current_left_arm_pos.shape)}, numel={self.current_left_arm_pos.numel()} (expected dim=1 and numel=7)")
 
                 if self.current_right_arm_pos is None:
-                    print("❌ current_right_arm_pos is None")
+                    logger.debug("Current_right_arm_pos is None!")
                 else:
-                    print(f"ℹ️ current_right_arm_pos: dim={self.current_right_arm_pos.dim()}, shape={tuple(self.current_right_arm_pos.shape)}, numel={self.current_right_arm_pos.numel()} (expected dim=1 and numel=7)")
+                    logger.debug(f"Current_right_arm_pos: dim={self.current_right_arm_pos.dim()}, shape={tuple(self.current_right_arm_pos.shape)}, numel={self.current_right_arm_pos.numel()} (expected dim=1 and numel=7)")
                 return action
 
             with self.left_arm_lock:
@@ -154,8 +154,8 @@ class R1ProT(BaseDevice):
                     base_control_cmd = [0.0, 0.0, 0.0]
                 else:
                     vx, vy, wz, cmd_time = self.base_cmd
-                    print(f"cmd_time: {cmd_time:.9f} s")
-                    print(f" ✅ base cmd deltaT: {(current_time - cmd_time):.9f}")
+                    logger.debug(f"cmd_time: {cmd_time:.9f} s")
+                    logger.debug(f" ✅ base cmd deltaT: {(current_time - cmd_time):.9f}")
                     if current_time - cmd_time > 0.2:
                         base_control_cmd = [0.0, 0.0, 0.0]
                     else:
@@ -233,6 +233,7 @@ class R1ProT(BaseDevice):
                                             interpolation_factor * R1_GROUND_TORSO_JOINT_POS
 
                 action[self.robot.trunk_action_idx] = interpolated_trunk_pos
+        return action
 
     def get_base_cmd(self):
         return self.base_cmd[:3]
