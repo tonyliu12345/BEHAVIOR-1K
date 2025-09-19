@@ -32,6 +32,7 @@ from omnigibson.learning.utils.obs_utils import (
     create_video_writer,
     write_video,
 )
+from omnigibson.learning.wrappers import TaskProgressWrapper
 from omnigibson.macros import gm, create_module_macros
 from omnigibson.metrics import MetricBase, AgentMetric, TaskMetric
 from omnigibson.robots import BaseRobot
@@ -134,6 +135,9 @@ class Evaluator:
         env = og.Environment(configs=cfg)
         # instantiate env wrapper
         env = instantiate(env_wrapper, env=env)
+        # optionally wrap env with TaskProgressWrapper
+        if self.cfg.check_task_progress:
+            env = TaskProgressWrapper(env)
         return env
 
     def load_robot(self) -> BaseRobot:
