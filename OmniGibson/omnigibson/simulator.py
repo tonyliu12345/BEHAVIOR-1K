@@ -428,11 +428,11 @@ def _launch_simulator(*args, **kwargs):
             self._contact_sensor = lazy.isaacsim.sensors.physics._sensor.acquire_contact_sensor_interface()
 
         def _set_viewer_camera(
-                self,
-                relative_prim_path="/viewer_camera",
-                viewport_name="Viewport",
-                viewer_height=gm.DEFAULT_VIEWER_HEIGHT,
-                viewer_width=gm.DEFAULT_VIEWER_WIDTH,
+            self,
+            relative_prim_path="/viewer_camera",
+            viewport_name="Viewport",
+            viewer_height=gm.DEFAULT_VIEWER_HEIGHT,
+            viewer_width=gm.DEFAULT_VIEWER_WIDTH,
         ):
             """
             Creates a camera prim dedicated for this viewer at @prim_path if it doesn't exist,

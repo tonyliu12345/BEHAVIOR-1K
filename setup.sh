@@ -10,7 +10,7 @@ TELEOP=false
 DATASET=false
 PRIMITIVES=false
 DEV=false
-CUDA_VERSION="12.4"
+CUDA_VERSION="12.8"
 ACCEPT_CONDA_TOS=false
 ACCEPT_NVIDIA_EULA=false
 ACCEPT_DATASET_TOS=false
@@ -205,8 +205,8 @@ if [ "$NEW_ENV" = true ]; then
         exit 1
     fi
     
-    # Create environment with only Python 3.10
-    conda create -n behavior python=3.10 -c conda-forge -y
+    # Create environment with only Python 3.11
+    conda create -n behavior python=3.11 -c conda-forge -y
     conda activate behavior
     
     [[ "$CONDA_DEFAULT_ENV" != "behavior" ]] && { echo "ERROR: Failed to activate environment"; exit 1; }
@@ -221,7 +221,7 @@ if [ "$NEW_ENV" = true ]; then
     # Determine the CUDA version string for pip URL (e.g., cu126, cu124, etc.)
     CUDA_VER_SHORT=$(echo $CUDA_VERSION | sed 's/\.//g')  # e.g. convert 12.6 to 126
     
-    pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu${CUDA_VER_SHORT}
+    pip install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu${CUDA_VER_SHORT}
     
     echo "✓ PyTorch installation completed"
 fi
@@ -239,7 +239,7 @@ if [ "$OMNIGIBSON" = true ]; then
     
     # Check Python version
     PYTHON_VERSION=$(python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-    [ "$PYTHON_VERSION" != "3.10" ] && { echo "ERROR: Python 3.10 required, found $PYTHON_VERSION"; exit 1; }
+    [ "$PYTHON_VERSION" != "3.11" ] && { echo "ERROR: Python 3.11 required, found $PYTHON_VERSION"; exit 1; }
     
     # Check for conflicting environment variables
     if [[ -n "$EXP_PATH" || -n "$CARB_APP_PATH" || -n "$ISAAC_PATH" ]]; then
@@ -287,21 +287,38 @@ if [ "$OMNIGIBSON" = true ]; then
         install_isaac_packages() {
             local temp_dir=$(mktemp -d)
             local packages=(
-                "omniverse_kit-106.5.0.162521" "isaacsim_kernel-4.5.0.0" "isaacsim_app-4.5.0.0"
-                "isaacsim_core-4.5.0.0" "isaacsim_gui-4.5.0.0" "isaacsim_utils-4.5.0.0"
-                "isaacsim_storage-4.5.0.0" "isaacsim_asset-4.5.0.0" "isaacsim_sensor-4.5.0.0"
-                "isaacsim_robot_motion-4.5.0.0" "isaacsim_robot-4.5.0.0" "isaacsim_benchmark-4.5.0.0"
-                "isaacsim_code_editor-4.5.0.0" "isaacsim_ros1-4.5.0.0" "isaacsim_cortex-4.5.0.0"
-                "isaacsim_example-4.5.0.0" "isaacsim_replicator-4.5.0.0" "isaacsim_rl-4.5.0.0"
-                "isaacsim_robot_setup-4.5.0.0" "isaacsim_ros2-4.5.0.0" "isaacsim_template-4.5.0.0"
-                "isaacsim_test-4.5.0.0" "isaacsim-4.5.0.0" "isaacsim_extscache_physics-4.5.0.0"
-                "isaacsim_extscache_kit-4.5.0.0" "isaacsim_extscache_kit_sdk-4.5.0.0"
+                "omniverse_kit-107.3.1.206797"
+                "isaacsim_kernel-5.0.0.0"
+                "isaacsim_app-5.0.0.0"
+                "isaacsim_core-5.0.0.0"
+                "isaacsim_gui-5.0.0.0"
+                "isaacsim_utils-5.0.0.0"
+                "isaacsim_storage-5.0.0.0"
+                "isaacsim_asset-5.0.0.0"
+                "isaacsim_sensor-5.0.0.0"
+                "isaacsim_robot_motion-5.0.0.0"
+                "isaacsim_robot-5.0.0.0"
+                "isaacsim_benchmark-5.0.0.0"
+                "isaacsim_code_editor-5.0.0.0"
+                "isaacsim_ros1-5.0.0.0"
+                "isaacsim_cortex-5.0.0.0"
+                "isaacsim_example-5.0.0.0"
+                "isaacsim_replicator-5.0.0.0"
+                "isaacsim_rl-5.0.0.0"
+                "isaacsim_robot_setup-5.0.0.0"
+                "isaacsim_ros2-5.0.0.0"
+                "isaacsim_template-5.0.0.0"
+                "isaacsim_test-5.0.0.0"
+                "isaacsim-5.0.0.0"
+                "isaacsim_extscache_physics-5.0.0.0"
+                "isaacsim_extscache_kit-5.0.0.0"
+                "isaacsim_extscache_kit_sdk-5.0.0.0"
             )
             
             local wheel_files=()
             for pkg in "${packages[@]}"; do
                 local pkg_name=${pkg%-*}
-                local filename="${pkg}-cp310-none-manylinux_2_34_x86_64.whl"
+                local filename="${pkg}-cp311-none-manylinux_2_35_x86_64.whl"
                 local url="https://pypi.nvidia.com/${pkg_name//_/-}/$filename"
                 local filepath="$temp_dir/$filename"
                 
@@ -340,6 +357,10 @@ if [ "$OMNIGIBSON" = true ]; then
             echo "Fixing cryptography conflict..."
             rm -rf "$ISAAC_PATH/exts/omni.pip.cloud/pip_prebundle/cryptography"
         fi
+
+        # Remove packaging, there is a conflict where isaacsim enforces 23.0 but omni kit ships with 25.0????? Why????
+        # TODO; located at: /home/josiahw/miniforge3/envs/b1k/lib/python3.11/site-packages/isaacsim/extscache/omni.services.pip_archive-0.16.0+107.0.3.lx64.cp311/pip_prebundle/packaging
+
     fi
     
     # Install datasets
