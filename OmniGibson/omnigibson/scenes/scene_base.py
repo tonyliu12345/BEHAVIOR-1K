@@ -1152,6 +1152,10 @@ class Scene(Serializable, Registerable, Recreatable, ABC):
         # TODO: Remove backwards compatible check once new scene RC is updated
         if "pos" in state:
             self.set_position_orientation(position=state["pos"], orientation=state["ori"])
+            # We need to propagate these changes or else we get a crash
+            og.sim.pi.update_simulation(elapsedStep=0.0, currentTime=og.sim.current_time)
+            og.sim.psi.fetch_results()
+            # Now update the rest of the state as normal
             self._registry.load_state(state=state["registry"], serialized=False)
         else:
             self._registry.load_state(state=state, serialized=False)

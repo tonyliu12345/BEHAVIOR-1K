@@ -252,25 +252,27 @@ class DatasetObject(USDObject):
         # Run super last
         super()._post_load()
 
-        # Get the average mass/density for this object category
-        avg_specs = get_og_avg_category_specs()
-        assert self.category in avg_specs, f"Category {self.category} not found in average object specs!"
-        category_mass = avg_specs[self.category]["mass"]
-        category_density = avg_specs[self.category]["density"]
-
         if self._prim_type == PrimType.RIGID:
-            total_volume = sum(link.volume for link in self._links.values())
-            for link in self._links.values():
-                # If not a meta (virtual) link, set the density based on avg_obj_dims and a zero mass (ignored)
-                if link.has_collision_meshes and isinstance(link, RigidDynamicPrim):
-                    if gm.FORCE_CATEGORY_MASS:
-                        # Each link should get the appropriate fraction of the category mass
-                        # based on the link volume
-                        link.mass = max(category_mass * (link.volume / total_volume), 1e-6)
-                        link.density = 0.0
-                    else:
-                        link.mass = 0.0
-                        link.density = category_density
+            if self._load_config["dataset_type"] == DatasetType.BEHAVIOR:
+
+                # Get the average mass/density for this object category
+                avg_specs = get_og_avg_category_specs()
+                assert self.category in avg_specs, f"Category {self.category} not found in average object specs!"
+                category_mass = avg_specs[self.category]["mass"]
+                category_density = avg_specs[self.category]["density"]
+
+                total_volume = sum(link.volume for link in self._links.values())
+                for link in self._links.values():
+                    # If not a meta (virtual) link, set the density based on avg_obj_dims and a zero mass (ignored)
+                    if link.has_collision_meshes and isinstance(link, RigidDynamicPrim):
+                        if gm.FORCE_CATEGORY_MASS:
+                            # Each link should get the appropriate fraction of the category mass
+                            # based on the link volume
+                            link.mass = max(category_mass * (link.volume / total_volume), 1e-6)
+                            link.density = 0.0
+                        else:
+                            link.mass = 0.0
+                            link.density = category_density
 
             # If there exists a center of mass annotation, apply it now
             if self.prim.HasAttribute("ig:centerOfMass"):

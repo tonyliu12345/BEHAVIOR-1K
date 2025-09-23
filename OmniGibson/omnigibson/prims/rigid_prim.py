@@ -111,6 +111,8 @@ class RigidPrim(XFormPrim):
         # Store references to owned visual / collision meshes
         # We iterate over all children of this object's prim,
         # and grab any that are presumed to be meshes
+
+
         self.update_meshes()
 
         # Possibly set the mass / density
@@ -164,21 +166,39 @@ class RigidPrim(XFormPrim):
         additional bodies are added manually
         """
         self._collision_meshes, self._visual_meshes = dict(), dict()
-        prims_to_check = []
         coms, vols = [], []
-        for prim in self._prim.GetChildren():
-            prims_to_check.append(prim)
-            for child in prim.GetChildren():
-                prims_to_check.append(child)
+        # Need to explicitly check for instanced children here since they may include instanced meshes
+        def set_non_instanced(prim):
+            # Make sure all nested children are NOT instanceable, because it breaks backwards-compatibility
+            if prim.IsInstanceable():
+                prim.SetInstanceable(False)
+                # Explicitly load this prim so that its xform properties are generated automatically
+                xform = XFormPrim(
+                    relative_prim_path=absolute_prim_path_to_scene_relative(self.scene, prim.GetPrimPath().__str__()),
+                    name=f"{prim.GetName()}_non_instanced",
+                    load_config=None,
+                )
+                xform.load(self.scene)
+            return True
+
+        # We don't do this recurisvely to save on compute, since we know the immediate children are instances if this
+        # does happen
+        # self.modify_children_prims(fcn=set_non_instanced, recursive=False, include_instances=True)
+
+        # Now iterate again and grab all the (potentially updated, newly non-instanced) meshes
+        prims_to_check = self.get_children_prims(recursive=True, include_instances=True)
+
         for prim in prims_to_check:
             mesh_type = prim.GetPrimTypeInfo().GetTypeName()
             if mesh_type in GEOM_TYPES:
-                mesh_name, mesh_path = prim.GetName(), prim.GetPrimPath().__str__()
-                mesh_prim = lazy.isaacsim.core.utils.prims.get_prim_at_path(prim_path=mesh_path)
-                is_collision = mesh_prim.HasAPI(lazy.pxr.UsdPhysics.CollisionAPI)
+                # Raw meshes themselves could be nested, and share the same name so we convert their (unique) prim path
+                # into a string we'll use for their name
+                mesh_path = prim.GetPrimPath().__str__()
+                mesh_name = mesh_path.split(self.prim_path)[-1].replace("/", "_")
+                is_collision = prim.HasAPI(lazy.pxr.UsdPhysics.CollisionAPI)
                 mesh_kwargs = {
                     "relative_prim_path": absolute_prim_path_to_scene_relative(self.scene, mesh_path),
-                    "name": f"{self._name}:{'collision' if is_collision else 'visual'}_{mesh_name}",
+                    "name": mesh_name,
                     "load_config": {"xform_props_pre_loaded": self._load_config["xform_props_pre_loaded"]},
                 }
                 if is_collision:
@@ -190,7 +210,7 @@ class RigidPrim(XFormPrim):
                     mesh.set_rest_offset(m.DEFAULT_REST_OFFSET)
                     self._collision_meshes[mesh_name] = mesh
 
-                    volume, com = get_mesh_volume_and_com(mesh_prim)
+                    volume, com = get_mesh_volume_and_com(prim)
                     # We need to transform the volume and CoM from the mesh's local frame to the link's local frame
                     local_pos, local_orn = mesh.get_position_orientation(frame="parent")
                     vols.append(volume * th.prod(mesh.scale))
@@ -211,6 +231,9 @@ class RigidPrim(XFormPrim):
             vols_tensor = th.tensor(vols).unsqueeze(1)
             com = th.sum(coms_tensor * vols_tensor, dim=0) / th.sum(vols_tensor)
             self.center_of_mass = com
+
+            # TODO: Fix COM calculation -- underlying issue is bad pose computation using "local" with new prim hierarchy
+            # TODO: May be slow, but just sanity check using explicit local transform
 
     def enable_collisions(self):
         """

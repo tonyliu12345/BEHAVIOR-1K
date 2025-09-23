@@ -10,7 +10,7 @@ import omnigibson.utils.transform_utils as T
 from omnigibson.macros import create_module_macros
 from omnigibson.prims.entity_prim import EntityPrim
 from omnigibson.prims.rigid_dynamic_prim import RigidDynamicPrim
-from omnigibson.utils.constants import PrimType
+from omnigibson.utils.constants import PrimType, OBJECT_CATEGORIES
 from omnigibson.utils.python_utils import Registerable, classproperty, get_uuid
 from omnigibson.utils.ui_utils import create_module_logger, suppress_omni_log
 from omnigibson.utils.usd_utils import create_joint
@@ -107,6 +107,9 @@ class BaseObject(EntityPrim, Registerable, metaclass=ABCMeta):
         load_config["kinematic_only"] = kinematic_only
         load_config["self_collisions"] = self_collisions
         load_config["prim_type"] = prim_type
+
+        # Store this category
+        OBJECT_CATEGORIES.add(self.category)
 
         # Run super init
         super().__init__(

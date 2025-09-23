@@ -352,6 +352,7 @@ def setup_omnigibson(install_datasets: bool, launcher_install: bool, isaac_sim_p
         shutil.rmtree(str(cryptography_path))
 
     # Remove packaging, there is a conflict where isaacsim enforces 23.0 but omni kit ships with 25.0????? Why????
+    # EDIT: It's because services extensions gets loaded via VR dep we have that vanilla isaac doesn't have
     # TODO; located at: /home/josiahw/miniforge3/envs/b1k/lib/python3.11/site-packages/isaacsim/extscache/omni.services.pip_archive-0.16.0+107.0.3.lx64.cp311/pip_prebundle/packaging
 
     click.echo("Isaac Sim has been successfully installed.")

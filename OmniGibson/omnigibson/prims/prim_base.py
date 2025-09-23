@@ -137,6 +137,10 @@ class BasePrim(Serializable, Recreatable, ABC):
         object and grab its handles and internal references. By default, this is a no-op.
         """
         pass
+        # # TODO: Remove this once we have support for instanceable prims
+        # # Disable instanceable prims because it breaks many fundamental R/W paradigms in OG
+        # if self._prim.IsInstanceable() or self._prim.IsInstanceProxy():
+        #     from IPython import embed; embed()
 
     def remove(self):
         """
@@ -154,6 +158,65 @@ class BasePrim(Serializable, Recreatable, ABC):
         Loads the raw prim into the simulator. Any post-processing should be done in @self._post_load()
         """
         raise NotImplementedError()
+
+    def get_children_prims(self, recursive=False, include_instances=False, _root=None):
+        """
+        Retrieves all children owned by this prim, optionally including instances and recursively searching as well.
+        NOTE: This traversal does DFS, not BFS
+
+        Args:
+            recursive (bool): If True, return all nested children owned by this prim
+            include_instances (bool): If True, include instanceable prims owned by this prim
+            _root (None or Usd.Prim): If specified, get the children from the specified root prim. Otherwise, defaults
+                to this prim.
+
+        Returns:
+            list of Usd.Prim: Owned children of this prim
+        """
+        _root = self.prim if _root is None else _root
+        prims = []
+        # See https://openusd.org/docs/api/_usd__page__scenegraph_instancing.html ("Traversing Into Instances with Instance Proxies")
+        children = _root.GetFilteredChildren(lazy.pxr.Usd.TraverseInstanceProxies()) \
+            if include_instances else _root.GetChildren()
+        prims += children
+        if recursive:
+            for child in children:
+                prims += self.get_children_prims(recursive=recursive, include_instances=include_instances, _root=child)
+        return prims
+
+    def modify_children_prims(self, fcn, recursive=False, include_instances=False, _root=None):
+        """
+        Modifies all children owned by this prim, optionally including instances and recursively searching as well.
+        NOTE: This traversal does DFS, not BFS
+
+        Args:
+            fcn (function): Function to modify children prims. Signature should be:
+
+                def fcn(prim: Usd.Prim) -> bool
+
+            Returning True, if traversal should continue, else False
+
+            include_instances (bool): If True, include instanceable prims owned by this prim
+            _root (None or Usd.Prim): If specified, get the children from the specified root prim. Otherwise, defaults
+                to this prim.
+
+        Returns:
+            bool: Whether the entire traversal list was completed or not (i.e.: False if terminated early)
+        """
+        _root = self.prim if _root is None else _root
+        # See https://openusd.org/docs/api/_usd__page__scenegraph_instancing.html ("Traversing Into Instances with Instance Proxies")
+        children = _root.GetFilteredChildren(lazy.pxr.Usd.TraverseInstanceProxies()) \
+            if include_instances else _root.GetChildren()
+        should_continue = True
+        for child in children:
+            should_continue = fcn(child)
+            if not should_continue:
+                break
+            if recursive:
+                should_continue = self.modify_children_prims(fcn=fcn, recursive=recursive, include_instances=include_instances, _root=child)
+                if not should_continue:
+                    break
+        return should_continue
 
     @property
     def loaded(self):

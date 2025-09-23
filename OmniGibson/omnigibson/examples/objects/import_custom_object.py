@@ -49,6 +49,8 @@ from omnigibson.utils.asset_conversion_utils import (
 @click.option("--check_scale", is_flag=True, help="Check meshes scale based on heuristic")
 @click.option("--rescale", is_flag=True, help="Rescale meshes based on heuristic if check_scale ")
 @click.option("--overwrite", is_flag=True, help="Overwrite any pre-existing files")
+@click.option("--no_keep_instanceable", is_flag=True, help="Do not keep instanceable meshes if set")
+@click.option("--no_import_inertia", is_flag=True, help="Do not import native inertia tensor if set")
 @click.option("--n_submesh", type=int, help="Maximum of submesh numnber")
 def import_custom_object(
     asset_path: str,
@@ -62,6 +64,8 @@ def import_custom_object(
     check_scale: bool,
     rescale: bool,
     overwrite: bool,
+    no_keep_instanceable: bool,
+    no_import_inertia: bool,
     n_submesh: int,
 ):
     """
@@ -121,6 +125,8 @@ def import_custom_object(
             collision_method=collision_method,
             hull_count=hull_count,
             overwrite=overwrite,
+            keep_instanceable=not no_keep_instanceable,
+            import_inertia_tensor=not no_import_inertia,
             use_usda=False,
         )
 

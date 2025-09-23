@@ -117,7 +117,7 @@ def _space_string_to_tensor(string):
     Returns:
         torch.Tensor: Tensor containing the numerical values from the input string.
     """
-    return th.tensor([float(x) for x in string.split(" ")])
+    return th.tensor([float(x) for x in string.split(" ") if len(x) > 0])
 
 
 def _tensor_to_space_script(array):
@@ -825,7 +825,7 @@ def _process_glass_link(prim):
         )
 
 
-def import_obj_metadata(usd_path, obj_category, obj_model, dataset_root, import_render_channels=False):
+def import_obj_metadata(usd_path, obj_category, obj_model, dataset_root, keep_instanceable=True, import_render_channels=False):
     """
     Imports metadata for a given object model from the dataset. This metadata consist of information
     that is NOT included in the URDF file and instead included in the various JSON files shipped in
@@ -836,6 +836,7 @@ def import_obj_metadata(usd_path, obj_category, obj_model, dataset_root, import_
         obj_category (str): The category of the object.
         obj_model (str): The model name of the object.
         dataset_root (str): The root directory of the dataset.
+        keep_instanceable (bool): Whether to keep the instanceable attributes from the imported USD object or not
         import_render_channels (bool, optional): Flag to import rendering channels. Defaults to False.
 
     Raises:
@@ -852,6 +853,19 @@ def import_obj_metadata(usd_path, obj_category, obj_model, dataset_root, import_
     lazy.isaacsim.core.utils.stage.open_stage(usd_path)
     stage = lazy.isaacsim.core.utils.stage.get_current_stage()
     prim = stage.GetDefaultPrim()
+
+    # First traverse entire tree and modify the prims in place if not keeping instanceable
+    if not keep_instanceable:
+
+        def remove_instanceable_recursive(_root):
+            # See https://openusd.org/docs/api/_usd__page__scenegraph_instancing.html ("Traversing Into Instances with Instance Proxies")
+            children = _root.GetFilteredChildren(lazy.pxr.Usd.TraverseInstanceProxies())
+            for child in children:
+                if child.IsInstanceable():
+                    child.SetInstanceable(False)
+                remove_instanceable_recursive(_root=child)
+
+        remove_instanceable_recursive(_root=prim)
 
     data = dict()
     for data_group in {"metadata", "mvbb_meta", "material_groups", "heights_per_link"}:
@@ -1069,6 +1083,7 @@ def _recursively_replace_list_of_dict(dic):
 def _create_urdf_import_config(
     use_convex_decomposition=False,
     merge_fixed_joints=False,
+    import_inertia_tensor=True,
 ):
     """
     Creates and configures a URDF import configuration.
@@ -1083,6 +1098,7 @@ def _create_urdf_import_config(
         use_convex_decomposition (bool): Whether to have omniverse use internal convex decomposition
             on any collision meshes
         merge_fixed_joints (bool): Whether to merge fixed joints or not
+        import_inertia_tensor (bool): Whether to import the URDF's native inertia tensor or not
 
     Returns:
         import_config: The configured URDF import configuration object.
@@ -1096,7 +1112,7 @@ def _create_urdf_import_config(
     import_config.set_merge_fixed_joints(merge_fixed_joints)
     import_config.set_convex_decomp(use_convex_decomposition)
     import_config.set_fix_base(False)
-    import_config.set_import_inertia_tensor(True)
+    import_config.set_import_inertia_tensor(import_inertia_tensor)
     import_config.set_distance_scale(1.0)
     import_config.set_density(0.0)
     import_config.set_default_drive_type(drive_mode.JOINT_DRIVE_NONE)
@@ -1117,6 +1133,7 @@ def import_obj_urdf(
     use_omni_convex_decomp=False,
     use_usda=False,
     merge_fixed_joints=False,
+    import_inertia_tensor=True,
 ):
     """
     Imports an object from a URDF file into the current stage.
@@ -1130,6 +1147,7 @@ def import_obj_urdf(
         use_usda (bool): If set, will write files to .usda files instead of .usd
             (bigger memory footprint, but human-readable)
         merge_fixed_joints (bool): whether to merge fixed joints or not
+        import_inertia_tensor (bool): Whether to import the URDF's native inertia tensor or not
 
     Returns:
         2-tuple:
@@ -1144,6 +1162,7 @@ def import_obj_urdf(
     cfg = _create_urdf_import_config(
         use_convex_decomposition=use_omni_convex_decomp,
         merge_fixed_joints=merge_fixed_joints,
+        import_inertia_tensor=import_inertia_tensor,
     )
     # Check if filepath exists
     usd_path = f"{dataset_root}/objects/{obj_category}/{obj_model}/usd/{obj_model}.{'usda' if use_usda else 'usd'}"
@@ -2634,7 +2653,9 @@ def import_og_asset_from_urdf(
     convex_links=None,
     no_decompose_links=None,
     visual_only_links=None,
+    keep_instanceable=True,
     merge_fixed_joints=False,
+    import_inertia_tensor=True,
     dataset_root=gm.CUSTOM_DATASET_PATH,
     hull_count=32,
     overwrite=False,
@@ -2658,7 +2679,9 @@ def import_og_asset_from_urdf(
         no_decompose_links (None or list of str): If specified, links that should not have any special collision
             decomposition applied. This will only use the convex hull
         visual_only_links (None or list of str): If specified, links that should have no colliders associated with it
+        keep_instanceable (bool): Whether to keep the instanceable attributes from the imported USD object or not
         merge_fixed_joints (bool): Whether to merge fixed joints or not
+        import_inertia_tensor (bool): Whether to import the URDF's native inertia tensor or not
         dataset_root (str): Dataset root directory to use for writing imported USD file. Default is custom dataset
             path set from the global macros
         hull_count (int): Maximum number of convex hulls to decompose individual visual meshes into.
@@ -2729,6 +2752,7 @@ def import_og_asset_from_urdf(
         use_omni_convex_decomp=False,  # We already pre-decomposed the values, so don' use omni convex decomp
         use_usda=use_usda,
         merge_fixed_joints=merge_fixed_joints,
+        import_inertia_tensor=import_inertia_tensor,
     )
 
     # Copy meta links URDF to original name of object model
@@ -2739,6 +2763,7 @@ def import_og_asset_from_urdf(
         obj_category=category,
         obj_model=model,
         dataset_root=dataset_root,
+        keep_instanceable=keep_instanceable,
         import_render_channels=False,  # TODO: Make this True once we find a systematic / robust way to import materials of different source formats
     )
     print(
