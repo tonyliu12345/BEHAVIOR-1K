@@ -25,6 +25,8 @@ class RGBLowResWrapper(EnvironmentWrapper):
                 robot.sensors[sensor_name].horizontal_aperture = 40.0  # this is what we used in data collection
             robot.sensors[sensor_name].image_height = 224
             robot.sensors[sensor_name].image_width = 224
+            # add depth
+            robot.sensors[sensor_name].add_modality("depth_linear")
         # reload observation space
         env.load_observation_space()
         logger.info("Reloaded observation space!")
