@@ -222,7 +222,7 @@ if [ "$NEW_ENV" = true ]; then
     echo "Installing numpy and setuptools..."
     pip install "numpy<2" "setuptools<=79"
     
-    # Install PyTorch via pip with CUDA support
+        # Install PyTorch via pip with CUDA support
     echo "Installing PyTorch with CUDA $CUDA_VERSION support..."
     
     # Determine the CUDA version string for pip URL (e.g., cu126, cu124, etc.)
@@ -230,7 +230,18 @@ if [ "$NEW_ENV" = true ]; then
     
     pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu${CUDA_VER_SHORT}
     echo "✓ PyTorch installation completed"
+
+    # If JoyLo is requested, install PyQt6 now via conda so we don't build from source with pip
+    if [ "$JOYLO" = true ]; then
+        if command -v conda >/dev/null 2>&1; then
+            echo "Installing PyQt6 (JoyLo GUI dependency) via conda-forge..."
+            conda install -c conda-forge pyqt6 -y
+        else
+            echo "WARNING: conda not found while setting up env; JoyLo may fail to install PyQt6."
+        fi
+    fi
 fi
+
 # Install BDDL
 if [ "$BDDL" = true ]; then
     echo "Installing BDDL..."
@@ -365,8 +376,24 @@ fi
 if [ "$JOYLO" = true ]; then
     echo "Installing JoyLo..."
     [ ! -d "joylo" ] && { echo "ERROR: joylo directory not found"; exit 1; }
+
+    # Ensure PyQt6 is available BEFORE installing joylo, to avoid building from source with sip/qmake
+    if python -c "import PyQt6" 2>/dev/null; then
+        echo "PyQt6 already installed, skipping PyQt6 installation..."
+    else
+        if command -v conda >/dev/null 2>&1; then
+            echo "PyQt6 not found; installing via conda-forge..."
+            conda install -c conda-forge pyqt6 -y
+        else
+            echo "WARNING: conda not found. Attempting PyQt6 install via pip; this may fail if Qt dev tools (qmake) are not installed."
+            pip install PyQt6
+        fi
+    fi
+
+    # Now install JoyLo
     pip install -e "$WORKDIR/joylo"
 fi
+
 
 # Install Eval
 if [ "$EVAL" = true ]; then
